@@ -1,22 +1,38 @@
 """Groq access for the graph nodes. Every call goes through `structured()`, which is
 the only place raw model output exists: it is parsed and validated into a Pydantic
-model before anything else in the app sees it."""
+model before anything else in the app sees it.
 
+Model selection: GROQ_MODEL (the assignment's gemma2-9b-it, shut down by Groq) is
+checked once at startup against the model catalogue; if it is not served, requests go
+to GROQ_FALLBACK_MODEL and /api/health reports the switch.
+
+Output method: gpt-oss models get Groq Structured Outputs (strict JSON Schema derived
+from the Pydantic model); any other model gets JSON Object Mode. Either way the
+result is validated by the same Pydantic model.
+"""
+
+import json
 import logging
 from typing import TypeVar
 
-from groq import APIStatusError, BadRequestError, Groq, NotFoundError
+from groq import APIStatusError, Groq
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ..config import settings
 
 log = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
+STRICT_SCHEMA_MODELS = {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
 UNAVAILABLE_CODES = {"model_decommissioned", "model_not_found"}
+# JSON Schema keywords outside Groq's strict-mode subset; constraints are still enforced by Pydantic.
+UNSUPPORTED_KEYWORDS = {
+    "default", "title", "format", "minLength", "maxLength", "minimum", "maximum",
+    "exclusiveMinimum", "exclusiveMaximum", "minItems", "maxItems", "pattern",
+}
 
 
 class AIConfigError(RuntimeError):
@@ -45,24 +61,21 @@ def model_status() -> dict:
 
 
 def resolve_model() -> None:
-    """Called at startup: ask Groq whether GROQ_MODEL still exists and switch to the
-    fallback up front, so /api/health and the logs state the truth from the first request."""
+    """Startup: one catalogue request decides which model serves requests, so no real
+    completion is ever sent to a decommissioned GROQ_MODEL."""
     if not settings.groq_api_key:
         return
-    client = Groq(api_key=settings.groq_api_key)
     try:
-        client.models.retrieve(settings.groq_model)
+        served = {m.id for m in Groq(api_key=settings.groq_api_key).models.list().data}
+    except APIStatusError as exc:
+        log.warning("Could not list Groq models (%s); will fall back on demand", exc.status_code)
+        return
+    if settings.groq_model in served:
         log.info("Groq model %s is available", settings.groq_model)
         return
-    except (NotFoundError, BadRequestError) as exc:
-        _switch_to_fallback(_error_code(exc) or "model_unavailable")
-    except APIStatusError as exc:
-        log.warning("Could not verify Groq model availability (%s); will fall back on demand", exc.status_code)
-        return
-    try:
-        client.models.retrieve(settings.groq_fallback_model)
-    except APIStatusError as exc:
-        log.error("Fallback model %s is also unavailable (%s)", settings.groq_fallback_model, _error_code(exc) or exc.status_code)
+    _switch_to_fallback(f"{settings.groq_model} is not served by Groq for this key")
+    if settings.groq_fallback_model not in served:
+        log.error("Fallback model %s is not served either", settings.groq_fallback_model)
         _set_reason(f"{_fallback_reason}; fallback {settings.groq_fallback_model} also unavailable")
 
 
@@ -70,7 +83,7 @@ def _switch_to_fallback(reason: str) -> None:
     global _active_model
     _active_model = settings.groq_fallback_model
     _set_reason(reason)
-    log.warning("Groq model %s unavailable (%s); using fallback %s", settings.groq_model, reason, _active_model)
+    log.warning("Using fallback model %s (%s)", _active_model, reason)
 
 
 def _set_reason(reason: str) -> None:
@@ -78,42 +91,82 @@ def _set_reason(reason: str) -> None:
     _fallback_reason = reason
 
 
+def strict_json_schema(model: type[BaseModel]) -> dict:
+    """Groq strict mode needs every property required and additionalProperties=false on
+    each object, and only a subset of keywords. Derived from the Pydantic model."""
+
+    def is_date(prop: dict) -> bool:
+        return prop.get("format") == "date" or any(b.get("format") == "date" for b in prop.get("anyOf", []))
+
+    def walk(node):
+        if isinstance(node, list):
+            return [walk(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        if node.get("type") == "object" and "properties" in node:
+            node["required"] = list(node["properties"])
+            node["additionalProperties"] = False
+            for prop in node["properties"].values():
+                if is_date(prop):
+                    prop["description"] = (prop.get("description", "") + " (YYYY-MM-DD)").strip()
+        return {key: walk(value) for key, value in node.items() if key not in UNSUPPORTED_KEYWORDS}
+
+    schema = walk(model.model_json_schema())
+    schema["title"] = model.__name__
+    return schema
+
+
+def output_method(model: str) -> str:
+    return "json_schema" if model in STRICT_SCHEMA_MODELS else "json_mode"
+
+
+def _runnable(schema: type[BaseModel]):
+    llm = ChatGroq(model=_active_model, api_key=settings.groq_api_key, temperature=0, max_retries=2)
+    if output_method(_active_model) == "json_schema":
+        return llm.with_structured_output(strict_json_schema(schema), method="json_schema", strict=True)
+    return llm.with_structured_output(method="json_mode")
+
+
 def _error_code(exc: APIStatusError) -> str:
     body = exc.body if isinstance(exc.body, dict) else {}
     return str((body.get("error") or {}).get("code") or "")
 
 
-def _invoke(runnable, messages):
+def _call(schema: type[T], runnable, messages) -> T:
+    """One model call -> dict -> Pydantic. Any bad output surfaces as OutputParserException."""
     try:
-        return runnable.invoke(messages)
+        raw = runnable.invoke(messages)
     except APIStatusError as exc:
-        # Groq validates JSON mode output itself and rejects unparseable generations.
-        if _error_code(exc) == "json_validate_failed":
+        if _error_code(exc) == "json_validate_failed":  # Groq itself rejected the generation
             raise OutputParserException("Model produced invalid JSON.", llm_output="") from exc
         raise
-
-
-def structured(schema: type[T], system_prompt: str, user_content: str) -> T:
-    """Groq JSON mode -> Pydantic validation. One corrective retry on invalid output."""
-    if not settings.groq_api_key:
-        raise AIConfigError("GROQ_API_KEY is not configured.")
-
-    llm = ChatGroq(model=_active_model, api_key=settings.groq_api_key, temperature=0, max_retries=2)
-    runnable = llm.with_structured_output(schema, method="json_mode")
-    messages = [SystemMessage(system_prompt), HumanMessage(user_content)]
-
     try:
-        return _invoke(runnable, messages)
+        return schema.model_validate(raw)
+    except ValidationError as exc:
+        raise OutputParserException(f"Schema validation failed: {exc}", llm_output=json.dumps(raw)) from exc
+
+
+def _call_with_one_retry(schema: type[T], runnable, messages) -> T:
+    try:
+        return _call(schema, runnable, messages)
     except OutputParserException as exc:
-        log.warning("Invalid %s output, retrying once: %s", schema.__name__, exc)
+        log.warning("Invalid %s output, retrying once: %s", schema.__name__, str(exc)[:300])
         messages += [
             AIMessage(exc.llm_output or "{}"),
             HumanMessage(f"That JSON was rejected: {exc}\nReturn the corrected JSON object only."),
         ]
         try:
-            return _invoke(runnable, messages)
+            return _call(schema, runnable, messages)
         except OutputParserException as exc2:
             raise AIOutputError(f"The AI returned malformed {schema.__name__} data.") from exc2
+
+
+def structured(schema: type[T], system_prompt: str, user_content: str) -> T:
+    if not settings.groq_api_key:
+        raise AIConfigError("GROQ_API_KEY is not configured.")
+    messages = [SystemMessage(system_prompt), HumanMessage(user_content)]
+    try:
+        return _call_with_one_retry(schema, _runnable(schema), messages)
     except APIStatusError as exc:
         code = _error_code(exc)
         if code in UNAVAILABLE_CODES and _active_model != settings.groq_fallback_model:

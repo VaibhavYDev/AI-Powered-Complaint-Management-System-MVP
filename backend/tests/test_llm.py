@@ -1,39 +1,44 @@
 """Model resolution and structured-output plumbing, with Groq mocked out."""
 
+import json
+from types import SimpleNamespace
+
 import httpx
 import pytest
-from groq import BadRequestError, InternalServerError, NotFoundError
-from pydantic import BaseModel
+from groq import BadRequestError, InternalServerError
+from langchain_core.exceptions import OutputParserException
+from langchain_groq.chat_models import _STRICT_STRUCTURED_OUTPUT_MODELS
+from pydantic import BaseModel, Field
 
 from app.ai import llm
 from app.config import settings
+from app.schemas import ComplaintData, EditProposal, RiskAssessment, RouterDecision
+
+FALLBACK = "openai/gpt-oss-20b"
 
 
 def groq_error(cls, status: int, code: str):
     response = httpx.Response(status, request=httpx.Request("GET", "https://api.groq.com"))
-    return cls(f"{code}", response=response, body={"error": {"code": code, "message": code}})
+    return cls(code, response=response, body={"error": {"code": code, "message": code}})
 
 
-class FakeModels:
-    def __init__(self, errors: dict):
-        self.errors, self.calls = errors, []
-
-    def retrieve(self, model):
-        self.calls.append(model)
-        if model in self.errors:
-            raise self.errors[model]
-        return {"id": model}
-
+# --- startup model resolution -------------------------------------------------------------
 
 @pytest.fixture
 def groq(monkeypatch):
-    """Install a fake Groq client; returns a function to set per-model errors."""
-    state = {}
+    """Fake Groq client whose catalogue is the given model ids (or raises)."""
+    calls = []
 
-    def install(errors=None):
-        state["models"] = FakeModels(errors or {})
-        monkeypatch.setattr(llm, "Groq", lambda api_key: type("Client", (), {"models": state["models"]})())
-        return state["models"]
+    def install(served=(), error=None):
+        def list_models():
+            calls.append("list")
+            if error:
+                raise error
+            return SimpleNamespace(data=[SimpleNamespace(id=m) for m in served])
+
+        client = SimpleNamespace(models=SimpleNamespace(list=list_models))
+        monkeypatch.setattr(llm, "Groq", lambda api_key: client)
+        return calls
 
     monkeypatch.setattr(llm, "_active_model", settings.groq_model)
     monkeypatch.setattr(llm, "_fallback_reason", None)
@@ -42,58 +47,107 @@ def groq(monkeypatch):
 
 def test_configured_models():
     assert settings.groq_model == "gemma2-9b-it"
-    assert settings.groq_fallback_model == "openai/gpt-oss-20b"
+    assert settings.groq_fallback_model == FALLBACK
 
 
 def test_no_key_skips_probe(groq, monkeypatch):
-    models = groq()
+    calls = groq(served=["gemma2-9b-it"])
     monkeypatch.setattr(settings, "groq_api_key", "")
     llm.resolve_model()
-    assert models.calls == [] and llm.model_status()["active_model"] == "gemma2-9b-it"
+    assert calls == [] and llm.model_status()["active_model"] == "gemma2-9b-it"
 
 
 def test_configured_model_available(groq):
-    models = groq()
+    calls = groq(served=["gemma2-9b-it", FALLBACK])
     llm.resolve_model()
-    assert models.calls == ["gemma2-9b-it"]
+    assert calls == ["list"]
     assert llm.model_status() == {"configured_model": "gemma2-9b-it", "active_model": "gemma2-9b-it", "fallback_reason": None}
 
 
-@pytest.mark.parametrize("error", [
-    groq_error(NotFoundError, 404, "model_not_found"),
-    groq_error(BadRequestError, 400, "model_decommissioned"),
-])
-def test_switches_to_fallback_when_configured_model_is_gone(groq, error):
-    models = groq({"gemma2-9b-it": error})
+def test_switches_to_fallback_with_one_catalogue_call(groq):
+    calls = groq(served=[FALLBACK, "openai/gpt-oss-120b"])
     llm.resolve_model()
-    assert models.calls == ["gemma2-9b-it", "openai/gpt-oss-20b"]
+    assert calls == ["list"]
     status = llm.model_status()
-    assert status["active_model"] == "openai/gpt-oss-20b"
-    assert status["fallback_reason"] == error.body["error"]["code"]
+    assert status["configured_model"] == "gemma2-9b-it" and status["active_model"] == FALLBACK
+    assert status["fallback_reason"] == "gemma2-9b-it is not served by Groq for this key"
 
 
 def test_reports_when_fallback_is_also_unavailable(groq):
-    groq({"gemma2-9b-it": groq_error(NotFoundError, 404, "model_not_found"),
-          "openai/gpt-oss-20b": groq_error(NotFoundError, 404, "model_not_found")})
+    groq(served=["some-other-model"])
     llm.resolve_model()
     status = llm.model_status()
-    assert status["active_model"] == "openai/gpt-oss-20b"
-    assert "fallback openai/gpt-oss-20b also unavailable" in status["fallback_reason"]
+    assert status["active_model"] == FALLBACK
+    assert f"fallback {FALLBACK} also unavailable" in status["fallback_reason"]
 
 
 def test_transient_probe_error_leaves_configuration_alone(groq):
-    groq({"gemma2-9b-it": groq_error(InternalServerError, 500, "")})
+    groq(error=groq_error(InternalServerError, 500, ""))
     llm.resolve_model()
-    assert llm.model_status()["active_model"] == "gemma2-9b-it"
+    assert llm.model_status() == {"configured_model": "gemma2-9b-it", "active_model": "gemma2-9b-it", "fallback_reason": None}
 
+
+# --- strict structured-output configuration -----------------------------------------------
+
+def test_strict_models_are_supported_by_installed_langchain_groq():
+    assert llm.STRICT_SCHEMA_MODELS <= set(_STRICT_STRUCTURED_OUTPUT_MODELS)
+    assert llm.output_method(FALLBACK) == "json_schema"
+    assert llm.output_method("gemma2-9b-it") == "json_mode"
+
+
+@pytest.mark.parametrize("model", [RouterDecision, ComplaintData, EditProposal, RiskAssessment])
+def test_strict_schema_is_derived_from_pydantic_and_groq_compliant(model):
+    schema = llm.strict_json_schema(model)
+    text = json.dumps(schema)
+    assert schema["title"] == model.__name__ and text.count('"title"') == 1  # root name only
+    assert not any(f'"{k}"' in text for k in llm.UNSUPPORTED_KEYWORDS - {"title"})
+
+    def check(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                assert node["required"] == list(node["properties"])
+                assert node["additionalProperties"] is False
+            for value in node.values():
+                check(value)
+        elif isinstance(node, list):
+            for item in node:
+                check(item)
+
+    check(schema)
+    assert set(schema["properties"]) == set(model.model_fields)  # nothing hand-written or dropped
+
+
+def test_strict_schema_keeps_enums_and_date_hints():
+    schema = llm.strict_json_schema(ComplaintData)
+    assert schema["$defs"]["DefectCategory"]["enum"][0] == "physical_defect"
+    assert "(YYYY-MM-DD)" in schema["$defs"]["Product"]["properties"]["expiry_date"]["description"]
+
+
+def test_binding_sends_strict_json_schema_for_gpt_oss(monkeypatch):
+    monkeypatch.setattr(llm, "_active_model", FALLBACK)
+    runnable = llm._runnable(RouterDecision)
+    response_format = runnable.first.kwargs["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["name"] == "RouterDecision"
+    assert response_format["json_schema"]["schema"]["required"] == ["intent"]
+    assert response_format["json_schema"]["schema"]["additionalProperties"] is False
+
+
+def test_binding_uses_json_object_mode_for_other_models(monkeypatch):
+    monkeypatch.setattr(llm, "_active_model", "gemma2-9b-it")
+    assert llm._runnable(RouterDecision).first.kwargs["response_format"] == {"type": "json_object"}
+
+
+# --- structured(): validation, retry, fallback, no key --------------------------------------
 
 class Answer(BaseModel):
-    value: int
+    value: int = Field(ge=0)
 
 
 class FakeChatGroq:
-    """Stands in for langchain_groq.ChatGroq: `behaviour[model]` is a list of outcomes
-    (an exception to raise or a parsed object to return) consumed per invoke."""
+    """Stands in for ChatGroq: `behaviour[model]` is a list of outcomes (exception or
+    dict) consumed one per invoke."""
 
     behaviour: dict = {}
     invoked: list = []
@@ -101,8 +155,9 @@ class FakeChatGroq:
     def __init__(self, model, **kwargs):
         self.model = model
 
-    def with_structured_output(self, schema, method):
-        assert method == "json_mode"
+    def with_structured_output(self, schema=None, method=None, strict=None):
+        assert method == llm.output_method(self.model)
+        assert (schema is not None and strict is True) if method == "json_schema" else (schema is None and strict is None)
         return self
 
     def invoke(self, messages):
@@ -116,7 +171,7 @@ class FakeChatGroq:
 @pytest.fixture
 def chat(monkeypatch):
     monkeypatch.setattr(llm, "ChatGroq", FakeChatGroq)
-    monkeypatch.setattr(llm, "_active_model", settings.groq_model)
+    monkeypatch.setattr(llm, "_active_model", FALLBACK)
     monkeypatch.setattr(llm, "_fallback_reason", None)
     FakeChatGroq.invoked = []
 
@@ -126,22 +181,35 @@ def chat(monkeypatch):
     return install
 
 
-def test_structured_falls_back_mid_flight(chat):
-    chat({"gemma2-9b-it": [groq_error(BadRequestError, 400, "model_decommissioned")], "openai/gpt-oss-20b": [Answer(value=1)]})
-    assert llm.structured(Answer, "sys", "user") == Answer(value=1)
-    assert [m for m, _ in FakeChatGroq.invoked] == ["gemma2-9b-it", "openai/gpt-oss-20b"]
-    assert llm.model_status()["fallback_reason"] == "model_decommissioned"
+def test_valid_output_is_validated_into_the_model(chat):
+    chat({FALLBACK: [{"value": 3}]})
+    assert llm.structured(Answer, "sys", "user") == Answer(value=3)
 
 
-def test_structured_retries_once_then_fails(chat):
-    from langchain_core.exceptions import OutputParserException
-
-    chat({"gemma2-9b-it": [OutputParserException("bad", llm_output="{"), Answer(value=2)]})
+def test_schema_violation_triggers_one_corrective_retry(chat):
+    chat({FALLBACK: [{"value": -1}, {"value": 2}]})
     assert llm.structured(Answer, "sys", "user") == Answer(value=2)
     assert [n for _, n in FakeChatGroq.invoked] == [2, 4]  # retry carries the rejected output + correction
 
-    chat({"gemma2-9b-it": [groq_error(BadRequestError, 400, "json_validate_failed"), OutputParserException("bad")]})
+
+def test_unparseable_json_is_retried_then_fails(chat):
+    chat({FALLBACK: [groq_error(BadRequestError, 400, "json_validate_failed"), OutputParserException("bad")]})
     with pytest.raises(llm.AIOutputError):
+        llm.structured(Answer, "sys", "user")
+    assert len(FakeChatGroq.invoked) == 2
+
+
+def test_falls_back_mid_flight_when_model_is_decommissioned(chat, monkeypatch):
+    monkeypatch.setattr(llm, "_active_model", "gemma2-9b-it")
+    chat({"gemma2-9b-it": [groq_error(BadRequestError, 400, "model_decommissioned")], FALLBACK: [{"value": 1}]})
+    assert llm.structured(Answer, "sys", "user") == Answer(value=1)
+    assert [m for m, _ in FakeChatGroq.invoked] == ["gemma2-9b-it", FALLBACK]
+    assert llm.model_status()["fallback_reason"] == "model_decommissioned"
+
+
+def test_other_provider_errors_are_reported_not_retried(chat):
+    chat({FALLBACK: [groq_error(InternalServerError, 500, "")]})
+    with pytest.raises(llm.AIProviderError):
         llm.structured(Answer, "sys", "user")
 
 
@@ -149,3 +217,4 @@ def test_structured_without_key(chat, monkeypatch):
     monkeypatch.setattr(settings, "groq_api_key", "")
     with pytest.raises(llm.AIConfigError):
         llm.structured(Answer, "sys", "user")
+    assert FakeChatGroq.invoked == []

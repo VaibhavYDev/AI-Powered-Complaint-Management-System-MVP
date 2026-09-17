@@ -9,7 +9,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, computed_field, field_validator, model_validator
 
 
 class ContactChannel(str, Enum):
@@ -203,48 +203,44 @@ FIELD_SECTION: dict[str, str] = {
 }
 
 
-class ComplaintPatch(ComplaintData):
-    """Changed fields only. Fields the model did not mention stay unset, so
-    `model_dump(exclude_unset=True)` yields exactly the proposed changes."""
-
-    @model_validator(mode="before")
-    @classmethod
-    def _lift_flat_keys(cls, data: Any) -> Any:
-        # Small models sometimes answer {"batch_number": "X"} instead of {"product": {"batch_number": "X"}}.
-        if not isinstance(data, dict):
-            return data
-        out: dict[str, dict] = {}
-        for key, value in data.items():
-            if key in SECTIONS and isinstance(value, dict):
-                out.setdefault(key, {}).update(value)
-            elif key in FIELD_SECTION:
-                out.setdefault(FIELD_SECTION[key], {})[key] = value
-        return out
+class FieldChange(BaseModel):
+    field: str = Field(description="canonical field name from the schema, e.g. 'batch_number'")
+    value: str | int | float | bool | None = Field(description="the new value; null is ignored")
 
 
 class EditProposal(BaseModel):
-    """EDIT output. Clearing a value is only possible through `clear`; nulls inside
-    `changes` are ignored so a sloppy model can never wipe existing data."""
+    """EDIT output: a sparse list of field changes plus explicit clears. Unlisted fields
+    are untouched. Nulls in `changes` are ignored; a field is nulled only via `clear`."""
 
-    changes: ComplaintPatch = ComplaintPatch()
-    clear: list[str] = Field(default_factory=list, description="fields to set to null, as 'section.field'")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _wrap_bare_patch(cls, data: Any) -> Any:
-        if isinstance(data, dict) and not ({"changes", "clear"} & data.keys()):
-            return {"changes": data}
-        return data
+    changes: list[FieldChange] = []
+    clear: list[str] = Field(default_factory=list, description="fields to set to null, e.g. 'phone'")
 
     @field_validator("clear", mode="before")
     @classmethod
     def _known_fields_only(cls, paths: Any) -> list[str]:
-        resolved = []
-        for path in paths if isinstance(paths, list) else [paths]:
-            field = str(path).rsplit(".", 1)[-1]
-            if field in FIELD_SECTION:
-                resolved.append(f"{FIELD_SECTION[field]}.{field}")
-        return resolved
+        paths = paths if isinstance(paths, list) else [paths]
+        fields = [str(p).rsplit(".", 1)[-1] for p in paths]
+        return [f"{FIELD_SECTION[f]}.{f}" for f in fields if f in FIELD_SECTION]
+
+    @model_validator(mode="after")
+    def _values_fit_schema(self):
+        try:
+            ComplaintData.model_validate(self.patch())
+        except ValidationError as exc:
+            raise ValueError(f"change values do not fit the complaint schema: {exc}") from exc
+        return self
+
+    def patch(self) -> dict:
+        """{section: {field: value}} as proposed, before normalisation by the section models."""
+        patch: dict[str, dict] = {}
+        for change in self.changes:
+            field = change.field.rsplit(".", 1)[-1]
+            if field in FIELD_SECTION and change.value is not None:
+                patch.setdefault(FIELD_SECTION[field], {})[field] = change.value
+        for path in self.clear:
+            section, field = path.split(".")
+            patch.setdefault(section, {})[field] = None
+        return patch
 
 
 class Complaint(ComplaintData):

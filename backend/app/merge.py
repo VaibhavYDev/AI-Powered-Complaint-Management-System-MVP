@@ -1,18 +1,14 @@
 """Partial-update logic for EDIT. The LLM only proposes changes; this module decides
 how they are applied so unrelated data can never be erased."""
 
-from .schemas import EditProposal
+from .schemas import ComplaintData, EditProposal
 
 
 def patch_from(proposal: EditProposal) -> dict:
-    """{section: {field: value}} containing only fields the model explicitly set.
-    Nulls inside `changes` are dropped; a field becomes null only via `clear`."""
-    raw = proposal.changes.model_dump(exclude_unset=True, mode="json")
-    patch = {section: {k: v for k, v in fields.items() if v is not None} for section, fields in raw.items()}
-    for path in proposal.clear:
-        section, field = path.split(".")
-        patch.setdefault(section, {})[field] = None
-    return {section: fields for section, fields in patch.items() if fields}
+    """{section: {field: value}} with values normalised by the canonical section models
+    (enum/boolean/date coercion). Only proposed fields are present; cleared ones are null."""
+    normalised = ComplaintData.model_validate(proposal.patch()).model_dump(exclude_unset=True, mode="json")
+    return {section: fields for section, fields in normalised.items() if fields}
 
 
 def apply_patch(existing: dict, patch: dict) -> dict:

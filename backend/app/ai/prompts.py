@@ -67,18 +67,18 @@ Map the document's contents into the structured JSON complaint record.
 
 EDIT_PROMPT = """You are a quality-assurance assistant updating an existing pharmaceutical customer complaint record.
 The user will ask to change, add or remove specific field values. Respond with JSON of this shape:
-{{"changes": {{<section>: {{<field>: <new value>}}}}, "clear": ["<section>.<field>"]}}
+{{"changes": [{{"field": "<field name>", "value": <new value>}}], "clear": ["<field name>"]}}
 
 Examples:
-- "Change the batch number to PCM24099" -> {{"changes": {{"product": {{"batch_number": "PCM24099"}}}}, "clear": []}}
-- "The complainant email is a@b.com and the sample is available" -> {{"changes": {{"complainant": {{"email": "a@b.com"}}, "complaint": {{"sample_available": true}}}}, "clear": []}}
-- "Remove the phone number" -> {{"changes": {{}}, "clear": ["complainant.phone"]}}
+- "Change the batch number to PCM24099" -> {{"changes": [{{"field": "batch_number", "value": "PCM24099"}}], "clear": []}}
+- "The complainant email is a@b.com and the sample is available" -> {{"changes": [{{"field": "email", "value": "a@b.com"}}, {{"field": "sample_available", "value": true}}], "clear": []}}
+- "Remove the phone number" -> {{"changes": [], "clear": ["phone"]}}
 
 Rules:
-- "changes" contains ONLY the fields being changed. Never repeat unchanged fields and never output null as a value.
+- List ONLY the fields being changed; never include unchanged fields and never use null as a value.
 - Use "clear" only when the user explicitly asks to remove/clear/delete a value.
 - Use the field names and value formats from the schema below (dates YYYY-MM-DD, booleans true/false, enums exactly as listed). Today is {today}.
-- If the request maps to no field, return {{"changes": {{}}, "clear": []}}.
+- If the request maps to no field, return {{"changes": [], "clear": []}}.
 
 Schema:
 {guide}

@@ -48,7 +48,7 @@ LangGraph (backend/app/ai/graph.py)
                    ├─► extract ─► assess_risk ─► END
                    └─► edit ────► (touches complaint/patient?) ─► assess_risk ─► END
                                                              └─► END
-        │  every node = one Groq call in JSON mode, validated into a Pydantic model
+        │  every node = one Groq structured-output call, validated into a Pydantic model
         ▼
 Application logic: patch merge (merge.py) · persistence (crud.py) · SQLAlchemy JSONB (models.py)
         │
@@ -62,7 +62,7 @@ Responsibilities, one place each:
 |---|---|
 | Canonical complaint schema (Pydantic) | `backend/app/schemas.py` |
 | Prompts (field guide is generated from the schema) | `backend/app/ai/prompts.py` |
-| Groq calls, JSON-mode structured output, retry, model fallback | `backend/app/ai/llm.py` |
+| Groq calls, strict-schema / JSON-mode structured output, retry, model fallback | `backend/app/ai/llm.py` |
 | Graph nodes: route / log / edit / extract / assess_risk | `backend/app/ai/nodes.py` |
 | Graph wiring | `backend/app/ai/graph.py` |
 | EDIT patch semantics (what may change, what never can) | `backend/app/merge.py` |
@@ -77,12 +77,14 @@ There is no second, hand-written router: the graph *is* the control flow.
 
 - **LOG** (`log_complaint`): `ComplaintData` structured output from the message → `assess_risk`.
 - **EDIT** (`edit_complaint`): the model receives the current record and returns an
-  `EditProposal` — `{"changes": {section: {field: value}}, "clear": ["section.field"]}`.
-  `merge.patch_from` keeps only explicitly-set, non-null fields (nulls inside `changes` are
-  ignored; a field can only be nulled through `clear`, and only for known schema fields). The
-  patch is deep-merged into the existing record. Risk is re-assessed only if the patch touched
-  the `complaint` or `patient` sections, so a batch-number correction leaves the assessment
-  untouched.
+  `EditProposal` — a sparse list of operations,
+  `{"changes": [{"field": "batch_number", "value": "PCM24099"}], "clear": ["phone"]}`.
+  Every value is validated through the canonical section models (so `"yes"` becomes `true`
+  and a bad date is rejected), null values are ignored, and a field can only be nulled through
+  `clear`, which accepts known schema fields only. `merge.patch_from` turns the proposal into
+  `{section: {field: value}}` and `apply_patch` merges it into the existing record; unlisted
+  fields are never touched. Risk is re-assessed only if the patch touched the `complaint` or
+  `patient` sections, so a batch-number correction leaves the assessment untouched.
 - **EXTRACT** (`extract_complaint`): same schema as LOG with a document-oriented prompt.
 - **assess_risk**: `RiskAssessment` structured output from the (merged) complaint.
 
@@ -91,13 +93,23 @@ and `main.py` maps them to HTTP status codes, so endpoints contain no try/except
 
 ### Structured output and validation
 
-Groq only offers strict `json_schema` decoding for a few models, so every call uses LangChain's
-`with_structured_output(schema, method="json_mode")`: Groq's `json_object` response format,
-parsed by `PydanticOutputParser`. If validation fails the model is shown the error and asked
-once for corrected JSON; a second failure becomes `502 The AI returned malformed … data`.
-The schema also normalises common small-model quirks (`"Physical Defect"` → `physical_defect`,
-`"85"` → `0.85`, `"Not provided"` → `null`, `"45 years"` → `45`) but rejects genuinely invalid
-values (unknown severity class, unparseable dates, out-of-range confidence).
+All four model outputs (`RouterDecision`, `ComplaintData`, `EditProposal`, `RiskAssessment`)
+are Pydantic models in `schemas.py`; `ai/llm.py` chooses the Groq output method per model:
+
+- **gpt-oss models → Groq Structured Outputs, strict JSON Schema** —
+  `with_structured_output(strict_json_schema(Model), method="json_schema", strict=True)`.
+  The schema is generated from the Pydantic model (`model_json_schema()`) and adjusted to
+  Groq's strict subset: every property required, `additionalProperties: false` on each object,
+  unsupported keywords (`default`, `minLength`, `minimum`, `format`, …) removed, date fields
+  annotated `(YYYY-MM-DD)`. There is no second, hand-written schema.
+- **any other model → JSON Object Mode** — `with_structured_output(method="json_mode")`.
+
+In both cases the model's JSON is validated by the same Pydantic model (`Model.model_validate`),
+which also enforces the constraints the strict schema cannot express (non-empty lists,
+confidence 0–1, unparseable dates rejected). If Groq or Pydantic rejects the output, the model
+is shown the rejected JSON and the error and asked once for a corrected object; a second failure
+becomes `502 The AI returned malformed … data`. The schema normalises common quirks
+(`"Physical Defect"` → `physical_defect`, `85` → `0.85`, `"Not provided"` → `null`, `"45 years"` → `45`).
 
 ### Groq model note
 
@@ -112,16 +124,16 @@ assignment requirement from the operational model:
 | `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` | Current Groq production model used when Groq reports `GROQ_MODEL` decommissioned. `openai/gpt-oss-120b` is the larger option. |
 | — | `llama-3.3-70b-versatile` | Assignment-era alternative only; deprecated, not used as a fallback. |
 
-At startup `ai/llm.py` calls Groq's model endpoint for `GROQ_MODEL`; on `model_not_found` /
-`model_decommissioned` it switches to the fallback (and checks that the fallback itself exists),
-logging the reason. `GET /api/health` always reports `configured_model`, `active_model` and
-`fallback_reason`, so the model in use is never misrepresented. The same switch happens in-flight
-if a model disappears while the server is running. `scripts/probe_models.py` lists the models a
-key can access and runs one JSON-mode call through the app's own code path.
+At startup `ai/llm.py` makes one call to Groq's model catalogue (`GET /models`). If
+`GROQ_MODEL` is not in it, the app switches to the fallback immediately and records why — no
+completion request is ever sent to a decommissioned model. `GET /api/health` always reports
+`configured_model`, `active_model` and `fallback_reason`, so the model in use is never
+misrepresented. As a safety net, a `model_decommissioned` / `model_not_found` error on a live
+request triggers the same switch. `scripts/probe_models.py` lists the models a key can access
+and runs one structured call through the app's own code path.
 
-`openai/gpt-oss-20b` supports Groq's JSON Object Mode (used here) and additionally strict JSON
-Schema Mode; it returns its reasoning in a separate `reasoning` field, so `content` is pure JSON
-for the parser.
+`openai/gpt-oss-20b` supports Groq Structured Outputs (strict JSON Schema, used here) and returns
+its reasoning in a separate `reasoning` field, so `content` is pure JSON for the parser.
 
 ## Technology stack
 
@@ -317,7 +329,7 @@ labels it "AI-Assisted Risk Assessment".
 
 ```bash
 cd backend
-.venv\Scripts\python -m pytest -q          # 40 unit/API tests, no network or Postgres needed
+.venv\Scripts\python -m pytest -q          # 52 unit/API tests, no network or Postgres needed
 .venv\Scripts\python scripts/probe_models.py   # which models this key can use + one JSON-mode call
 .venv\Scripts\python scripts/e2e.py            # real Groq + PostgreSQL run against http://localhost:8000
 ```
