@@ -5,7 +5,7 @@ import logging
 from typing import Literal, TypedDict
 
 from ..merge import apply_patch, describe_changes, patch_from
-from ..schemas import ComplaintData, ComplaintPatch, Intent, RiskAssessment, RouterDecision
+from ..schemas import ComplaintData, EditProposal, Intent, RiskAssessment, RouterDecision
 from . import prompts
 from .llm import structured
 
@@ -54,7 +54,7 @@ def edit_complaint(state: GraphState) -> GraphState:
     existing = state.get("existing")
     if not existing:
         raise NoComplaintToEdit("There is no complaint loaded to edit. Log a complaint first or upload a document.")
-    proposal = structured(ComplaintPatch, prompts.edit_prompt(existing), state["text"])
+    proposal = structured(EditProposal, prompts.edit_prompt(existing), state["text"])
     patch = patch_from(proposal)
     if not patch:
         raise NothingExtracted("I couldn't map that request to any complaint field. Try naming the field, e.g. \"change the batch number to X\".")

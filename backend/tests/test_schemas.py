@@ -27,10 +27,28 @@ def test_missing_fields_stay_null():
     assert data.complainant.name is None and data.product.expiry_date is None
 
 
-def test_risk_assessment_normalisation_and_rejection():
-    risk = RiskAssessment.model_validate({"severity_class": "Class II", "severity_reason": "r", "confidence": 85})
-    assert risk.severity_class == "II" and risk.confidence == 0.85
+RISK = {"severity_class": "II", "severity_reason": "r", "immediate_actions": ["a"], "recommended_follow_up": ["b"], "confidence": 0.5}
+
+
+def test_risk_assessment_normalisation():
+    risk = RiskAssessment.model_validate({**RISK, "severity_class": "Class II", "confidence": 85, "immediate_actions": ["a", " ", ""]})
+    assert risk.severity_class == "II" and risk.confidence == 0.85 and risk.immediate_actions == ["a"]
+    assert "regulatory determination" in risk.model_dump()["disclaimer"].lower()
+
+
+@pytest.mark.parametrize("bad", [
+    {"severity_class": "IV"},
+    {"severity_reason": ""},
+    {"immediate_actions": []},
+    {"recommended_follow_up": []},
+    {"confidence": 1.5},
+    {"confidence": -0.1},
+])
+def test_risk_assessment_rejects_invalid(bad):
     with pytest.raises(ValidationError):
-        RiskAssessment.model_validate({"severity_class": "IV", "severity_reason": "r", "confidence": 0.5})
+        RiskAssessment.model_validate({**RISK, **bad})
+
+
+def test_unparseable_date_is_rejected():
     with pytest.raises(ValidationError):
         ComplaintData.model_validate({"product": {"expiry_date": "next year"}})

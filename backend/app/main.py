@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-from .ai.llm import AIConfigError, AIOutputError, AIProviderError, active_model
+from .ai.llm import AIConfigError, AIOutputError, AIProviderError, model_status, resolve_model
 from .ai.nodes import NoComplaintToEdit, NothingExtracted
 from .api.complaints import router
 from .config import settings
@@ -21,6 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
+    resolve_model()
     yield
 
 
@@ -65,4 +66,4 @@ def health():
         database = "ok"
     except OperationalError:
         database = "unavailable"
-    return {"database": database, "groq_configured": bool(settings.groq_api_key), "model": active_model()}
+    return {"database": database, "groq_configured": bool(settings.groq_api_key), **model_status()}

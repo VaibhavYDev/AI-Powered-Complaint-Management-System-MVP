@@ -10,7 +10,7 @@ class DocumentError(ValueError):
     pass
 
 
-def extract_pdf_text(data: bytes, filename: str = "") -> str:
+def extract_pdf_text(data: bytes) -> str:
     if not data:
         raise DocumentError("The uploaded file is empty.")
     if not data.startswith(b"%PDF"):

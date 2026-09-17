@@ -22,7 +22,7 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
 def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(415, "Only PDF files are supported.")
-    text = extract_pdf_text(file.file.read(), file.filename)
+    text = extract_pdf_text(file.file.read())
     result = run_copilot(text, source="document")
     return _persist(db, result, None, source="document")
 

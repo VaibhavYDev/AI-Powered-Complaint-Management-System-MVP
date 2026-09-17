@@ -144,14 +144,25 @@ class Patient(Section):
         return v
 
 
+RISK_DISCLAIMER = (
+    "AI-assisted preliminary triage to support human review. Not a regulatory determination "
+    "and not a substitute for the quality unit's investigation."
+)
+
+
 class RiskAssessment(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     severity_class: SeverityClass
-    severity_reason: str
-    immediate_actions: list[str] = []
-    recommended_follow_up: list[str] = []
+    severity_reason: str = Field(min_length=1)
+    immediate_actions: list[str] = Field(min_length=1)
+    recommended_follow_up: list[str] = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
+
+    @computed_field
+    @property
+    def disclaimer(self) -> str:
+        return RISK_DISCLAIMER
 
     @field_validator("severity_class", mode="before")
     @classmethod
@@ -161,10 +172,18 @@ class RiskAssessment(BaseModel):
             v = {"1": "I", "2": "II", "3": "III"}.get(v, v)
         return v
 
+    @field_validator("immediate_actions", "recommended_follow_up", mode="before")
+    @classmethod
+    def _non_empty_items(cls, v):
+        if isinstance(v, str):
+            v = [v]
+        return [item.strip() for item in v if isinstance(item, str) and item.strip()] if isinstance(v, list) else v
+
     @field_validator("confidence", mode="before")
     @classmethod
     def _percent_to_fraction(cls, v):
-        return v / 100 if isinstance(v, (int, float)) and 1 < v <= 100 else v
+        # 85 -> 0.85; a non-integer like 1.5 is simply invalid and rejected by the bounds.
+        return v / 100 if isinstance(v, (int, float)) and 1 < v <= 100 and float(v).is_integer() else v
 
 
 class ComplaintData(BaseModel):
@@ -185,8 +204,8 @@ FIELD_SECTION: dict[str, str] = {
 
 
 class ComplaintPatch(ComplaintData):
-    """Partial update produced by EDIT. Only fields the model explicitly returned are
-    considered set, so `model_dump(exclude_unset=True)` yields the patch."""
+    """Changed fields only. Fields the model did not mention stay unset, so
+    `model_dump(exclude_unset=True)` yields exactly the proposed changes."""
 
     @model_validator(mode="before")
     @classmethod
@@ -201,6 +220,31 @@ class ComplaintPatch(ComplaintData):
             elif key in FIELD_SECTION:
                 out.setdefault(FIELD_SECTION[key], {})[key] = value
         return out
+
+
+class EditProposal(BaseModel):
+    """EDIT output. Clearing a value is only possible through `clear`; nulls inside
+    `changes` are ignored so a sloppy model can never wipe existing data."""
+
+    changes: ComplaintPatch = ComplaintPatch()
+    clear: list[str] = Field(default_factory=list, description="fields to set to null, as 'section.field'")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _wrap_bare_patch(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not ({"changes", "clear"} & data.keys()):
+            return {"changes": data}
+        return data
+
+    @field_validator("clear", mode="before")
+    @classmethod
+    def _known_fields_only(cls, paths: Any) -> list[str]:
+        resolved = []
+        for path in paths if isinstance(paths, list) else [paths]:
+            field = str(path).rsplit(".", 1)[-1]
+            if field in FIELD_SECTION:
+                resolved.append(f"{FIELD_SECTION[field]}.{field}")
+        return resolved
 
 
 class Complaint(ComplaintData):
@@ -230,9 +274,14 @@ class ChatRequest(BaseModel):
 
 
 class CopilotResponse(BaseModel):
+    """What the frontend receives from /api/chat and /api/upload. `complaint` is always
+    the full persisted record; `patch` and `risk_assessment` describe what this
+    operation changed (a new assessment is only produced by LOG/EXTRACT and by EDITs
+    that touch the complaint or patient sections)."""
+
     intent: Intent
     message: str
     complaint_id: int
     complaint: Complaint
-    patch: dict | None = None
+    patch: dict[str, dict] | None = None
     risk_assessment: RiskAssessment | None = None

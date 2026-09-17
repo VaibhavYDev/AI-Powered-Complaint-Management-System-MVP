@@ -60,7 +60,7 @@ def test_upload_rejects_non_pdf(client):
 
 def test_upload_extracts(client, fake_graph, monkeypatch):
     fake_graph({"intent": Intent.EXTRACT, "draft": DRAFT, "risk": RISK, "reply": "Extracted."})
-    monkeypatch.setattr("app.api.complaints.extract_pdf_text", lambda data, filename="": "Complaint text")
+    monkeypatch.setattr("app.api.complaints.extract_pdf_text", lambda data: "Complaint text")
     r = client.post("/api/upload", files={"file": ("complaint.pdf", BytesIO(b"%PDF-1.4"), "application/pdf")})
     assert r.status_code == 200, r.text
     assert r.json()["intent"] == "EXTRACT" and r.json()["complaint"]["source"] == "document"
