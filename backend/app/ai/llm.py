@@ -49,19 +49,33 @@ def resolve_model() -> None:
     fallback up front, so /api/health and the logs state the truth from the first request."""
     if not settings.groq_api_key:
         return
+    client = Groq(api_key=settings.groq_api_key)
     try:
-        Groq(api_key=settings.groq_api_key).models.retrieve(settings.groq_model)
+        client.models.retrieve(settings.groq_model)
         log.info("Groq model %s is available", settings.groq_model)
+        return
     except (NotFoundError, BadRequestError) as exc:
         _switch_to_fallback(_error_code(exc) or "model_unavailable")
     except APIStatusError as exc:
         log.warning("Could not verify Groq model availability (%s); will fall back on demand", exc.status_code)
+        return
+    try:
+        client.models.retrieve(settings.groq_fallback_model)
+    except APIStatusError as exc:
+        log.error("Fallback model %s is also unavailable (%s)", settings.groq_fallback_model, _error_code(exc) or exc.status_code)
+        _set_reason(f"{_fallback_reason}; fallback {settings.groq_fallback_model} also unavailable")
 
 
 def _switch_to_fallback(reason: str) -> None:
-    global _active_model, _fallback_reason
-    _active_model, _fallback_reason = settings.groq_fallback_model, reason
+    global _active_model
+    _active_model = settings.groq_fallback_model
+    _set_reason(reason)
     log.warning("Groq model %s unavailable (%s); using fallback %s", settings.groq_model, reason, _active_model)
+
+
+def _set_reason(reason: str) -> None:
+    global _fallback_reason
+    _fallback_reason = reason
 
 
 def _error_code(exc: APIStatusError) -> str:

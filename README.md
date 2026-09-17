@@ -101,13 +101,27 @@ values (unknown severity class, unparseable dates, out-of-range confidence).
 
 ### Groq model note
 
-The assignment specifies `gemma2-9b-it`. **Groq deprecated that model on 2025-10-08**
-(recommended replacement: `llama-3.1-8b-instant`). The configuration therefore keeps the
-assignment model as `GROQ_MODEL` and declares `GROQ_FALLBACK_MODEL=llama-3.1-8b-instant`.
-At startup `ai/llm.py` asks Groq whether `GROQ_MODEL` still exists; if not, it switches to the
-fallback and logs why. `GET /api/health` always reports `configured_model`, `active_model` and
-`fallback_reason`, so the running model is never misrepresented. `llama-3.3-70b-versatile`
-can be set as either value for higher quality at lower speed.
+The assignment specifies `gemma2-9b-it`. Groq shut that model down on **2025-10-08**, and its
+suggested replacements from that time (`llama-3.1-8b-instant`, `llama-3.3-70b-versatile`) were
+shut down for free/developer tiers on **2026-08-16**. The configuration therefore separates the
+assignment requirement from the operational model:
+
+| Setting | Value | Role |
+|---|---|---|
+| `GROQ_MODEL` | `gemma2-9b-it` | Assignment model. Tried first, every startup. |
+| `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` | Current Groq production model used when Groq reports `GROQ_MODEL` decommissioned. `openai/gpt-oss-120b` is the larger option. |
+| — | `llama-3.3-70b-versatile` | Assignment-era alternative only; deprecated, not used as a fallback. |
+
+At startup `ai/llm.py` calls Groq's model endpoint for `GROQ_MODEL`; on `model_not_found` /
+`model_decommissioned` it switches to the fallback (and checks that the fallback itself exists),
+logging the reason. `GET /api/health` always reports `configured_model`, `active_model` and
+`fallback_reason`, so the model in use is never misrepresented. The same switch happens in-flight
+if a model disappears while the server is running. `scripts/probe_models.py` lists the models a
+key can access and runs one JSON-mode call through the app's own code path.
+
+`openai/gpt-oss-20b` supports Groq's JSON Object Mode (used here) and additionally strict JSON
+Schema Mode; it returns its reasoning in a separate `reasoning` field, so `content` is pure JSON
+for the parser.
 
 ## Technology stack
 
@@ -115,7 +129,7 @@ can be set as either value for higher quality at lower speed.
 |---|---|
 | Frontend | React 18, Redux Toolkit, Tailwind CSS, Inter font (Vite) |
 | Backend | Python 3.12+, FastAPI, SQLAlchemy 2, Pydantic 2 |
-| AI | LangGraph, LangChain Groq, Groq (`gemma2-9b-it` → `llama-3.1-8b-instant` fallback) |
+| AI | LangGraph 1.2, LangChain Groq 1.1, Groq (`gemma2-9b-it` configured → `openai/gpt-oss-20b` fallback) |
 | Documents | pypdf (text-based PDFs; OCR out of scope) |
 | Database | PostgreSQL 16 (JSONB), docker-compose for local dev |
 
@@ -166,7 +180,7 @@ Copy `backend/.env.example` to `backend/.env` and fill in your key. Never commit
 | `DATABASE_URL` | SQLAlchemy URL, e.g. `postgresql+psycopg://aivoa:aivoa@localhost:5432/aivoa` |
 | `GROQ_API_KEY` | Groq API key |
 | `GROQ_MODEL` | `gemma2-9b-it` (assignment default) |
-| `GROQ_FALLBACK_MODEL` | `llama-3.1-8b-instant` — used if Groq reports `GROQ_MODEL` decommissioned |
+| `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` — current Groq model used if `GROQ_MODEL` is decommissioned (`openai/gpt-oss-120b` for the larger option) |
 | `FRONTEND_URL` | CORS origin of the React dev server (`http://localhost:5173`) |
 
 ### 3. Backend
@@ -303,8 +317,9 @@ labels it "AI-Assisted Risk Assessment".
 
 ```bash
 cd backend
-.venv\Scripts\python -m pytest -q          # 30 unit/API tests, no network or Postgres needed
-.venv\Scripts\python scripts/e2e.py        # real Groq + PostgreSQL run against http://localhost:8000
+.venv\Scripts\python -m pytest -q          # 40 unit/API tests, no network or Postgres needed
+.venv\Scripts\python scripts/probe_models.py   # which models this key can use + one JSON-mode call
+.venv\Scripts\python scripts/e2e.py            # real Groq + PostgreSQL run against http://localhost:8000
 ```
 
 `tests/` cover schema normalisation/rejection, EDIT patch safety (single/nested/multiple fields,
@@ -335,7 +350,7 @@ against the live stack and asserts that unrelated fields are untouched by edits.
 
 - Text-based PDFs only; scanned documents need OCR, which is out of scope.
 - One complaint is edited at a time; there is no authentication, audit trail or workflow states.
-- `gemma2-9b-it` is deprecated by Groq; the fallback model is used when Groq rejects it.
+- `gemma2-9b-it` (and the llama-3.x alternatives) have been shut down by Groq; the fallback model is used whenever Groq rejects the configured one, and `/api/health` says so.
 - Small models occasionally miss a field; the co-pilot reports missing fields so they can be added by chat.
 - Clearing a field requires an explicit request ("remove the phone number"); model-emitted nulls are ignored by design.
 - The risk assessment is advisory and must be reviewed by the quality unit.
