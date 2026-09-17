@@ -73,9 +73,44 @@ def test_values_are_normalised_by_the_canonical_schema():
     assert patch == {"complaint": {"sample_available": True, "defect_category": "packaging"}, "product": {"expiry_date": "2028-02-28"}}
 
 
-def test_invalid_values_are_rejected_at_validation():
+@pytest.mark.parametrize("field, value", [
+    ("batch_number", True),            # str field, boolean given
+    ("sample_available", "maybe"),     # bool field, arbitrary string
+    ("patient_age", 42.5),             # int field, fraction
+    ("patient_age", "forty-two"),      # int field, words (must not become an accidental clear)
+    ("patient_age", True),             # int field, boolean
+    ("event_date", "15/09/2026"),      # date field, non-ISO
+    ("event_date", 20260915),          # date field, number
+    ("defect_category", "Packaging Defect"),  # enum field, not a member
+    ("contact_channel", "carrier pigeon"),
+])
+def test_values_that_do_not_fit_the_target_type_are_rejected(field, value):
     with pytest.raises(ValidationError):
-        EditProposal.model_validate({"changes": [{"field": "expiry_date", "value": "next week"}], "clear": []})
+        EditProposal.model_validate({"changes": [{"field": field, "value": value}], "clear": []})
+
+
+def test_each_field_type_is_validated_as_its_own_type():
+    patch = proposal([
+        ("batch_number", "PCM24099"), ("sample_available", True), ("patient_age", 42),
+        ("event_date", "2026-09-15"), ("defect_category", "packaging"), ("complainant.email", "rahul@example.com"),
+    ], clear=["complainant.phone"])
+    assert patch == {
+        "product": {"batch_number": "PCM24099"},
+        "complaint": {"sample_available": True, "event_date": "2026-09-15", "defect_category": "packaging"},
+        "patient": {"patient_age": 42},
+        "complainant": {"email": "rahul@example.com", "phone": None},
+    }
+    assert isinstance(patch["complaint"]["sample_available"], bool) and isinstance(patch["patient"]["patient_age"], int)
+    merged = apply_patch(EXISTING, patch)
+    assert ComplaintData.model_validate(merged).complaint.event_date.isoformat() == "2026-09-15"
+    assert merged["complainant"]["name"] == "Rahul" and merged["product"]["product_name"] == "Paracetamol 500mg"
+
+
+def test_non_editable_fields_are_reported_not_applied():
+    # severity_class belongs to the AI risk assessment, not the complaint record
+    p = EditProposal.model_validate({"changes": [{"field": "severity_class", "value": "II"}, {"field": "batch_number", "value": "B9"}]})
+    assert p.unknown_fields() == ["severity_class"]
+    assert patch_from(p) == {"product": {"batch_number": "B9"}}
 
 
 def test_unknown_fields_are_dropped_not_trusted():

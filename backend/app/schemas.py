@@ -54,15 +54,13 @@ class Intent(str, Enum):
 NULL_WORDS = {"", "null", "none", "n/a", "na", "unknown", "not stated", "not specified", "not provided", "not mentioned"}
 
 
-def _loose_enum(enum_cls: type[Enum], value: Any, fallback: Enum | None) -> Enum | None:
-    """Map free-form LLM strings ('Physical Defect', 'Class II') onto enum members."""
+def _loose_enum(enum_cls: type[Enum], value: Any) -> Any:
+    """Normalise LLM spellings ('Physical Defect' -> physical_defect) onto enum members.
+    Anything that still does not match is returned unchanged so Pydantic rejects it."""
     if value is None or isinstance(value, enum_cls):
         return value
     key = str(value).strip().lower().replace(" ", "_").replace("-", "_")
-    for member in enum_cls:
-        if key == member.value.lower():
-            return member
-    return fallback
+    return next((member for member in enum_cls if member.value == key), value)
 
 
 class Section(BaseModel):
@@ -89,7 +87,7 @@ class Complainant(Section):
     @field_validator("contact_channel", mode="before")
     @classmethod
     def _channel(cls, v):
-        return _loose_enum(ContactChannel, v, ContactChannel.other)
+        return _loose_enum(ContactChannel, v)
 
 
 class Product(Section):
@@ -117,7 +115,7 @@ class ComplaintDetails(Section):
     @field_validator("defect_category", mode="before")
     @classmethod
     def _category(cls, v):
-        return _loose_enum(DefectCategory, v, DefectCategory.other)
+        return _loose_enum(DefectCategory, v)
 
 
 class Patient(Section):
@@ -133,14 +131,16 @@ class Patient(Section):
     @classmethod
     def _gender(cls, v):
         v = {"m": "male", "f": "female"}.get(str(v).strip().lower(), v) if isinstance(v, str) else v
-        return _loose_enum(Gender, v, Gender.unknown)
+        return _loose_enum(Gender, v)
 
     @field_validator("patient_age", mode="before")
     @classmethod
     def _age(cls, v):
-        if isinstance(v, str):
+        if isinstance(v, bool):
+            raise ValueError("patient_age must be a whole number")
+        if isinstance(v, str):  # "45 years" -> 45; non-numeric text falls through and is rejected
             digits = "".join(ch for ch in v if ch.isdigit())
-            return int(digits) if digits else None
+            return int(digits) if digits else v
         return v
 
 
@@ -229,6 +229,9 @@ class EditProposal(BaseModel):
         except ValidationError as exc:
             raise ValueError(f"change values do not fit the complaint schema: {exc}") from exc
         return self
+
+    def unknown_fields(self) -> list[str]:
+        return [c.field for c in self.changes if c.field.rsplit(".", 1)[-1] not in FIELD_SECTION]
 
     def patch(self) -> dict:
         """{section: {field: value}} as proposed, before normalisation by the section models."""

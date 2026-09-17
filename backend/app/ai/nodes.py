@@ -56,10 +56,11 @@ def edit_complaint(state: GraphState) -> GraphState:
         raise NoComplaintToEdit("There is no complaint loaded to edit. Log a complaint first or upload a document.")
     proposal = structured(EditProposal, prompts.edit_prompt(existing), state["text"])
     patch = patch_from(proposal)
+    ignored = f" Not an editable complaint field: {', '.join(proposal.unknown_fields())}." if proposal.unknown_fields() else ""
     if not patch:
-        raise NothingExtracted("I couldn't map that request to any complaint field. Try naming the field, e.g. \"change the batch number to X\".")
+        raise NothingExtracted("I couldn't map that request to any complaint field." + (ignored or " Try naming the field, e.g. \"change the batch number to X\"."))
     merged = ComplaintData.model_validate(apply_patch(existing, patch))
-    return {"patch": patch, "draft": merged, "reply": describe_changes(existing, patch)}
+    return {"patch": patch, "draft": merged, "reply": describe_changes(existing, patch) + ignored}
 
 
 def assess_risk(state: GraphState) -> GraphState:

@@ -108,8 +108,10 @@ In both cases the model's JSON is validated by the same Pydantic model (`Model.m
 which also enforces the constraints the strict schema cannot express (non-empty lists,
 confidence 0–1, unparseable dates rejected). If Groq or Pydantic rejects the output, the model
 is shown the rejected JSON and the error and asked once for a corrected object; a second failure
-becomes `502 The AI returned malformed … data`. The schema normalises common quirks
-(`"Physical Defect"` → `physical_defect`, `85` → `0.85`, `"Not provided"` → `null`, `"45 years"` → `45`).
+becomes `502 The AI returned malformed … data`. The schema normalises common spellings
+(`"Physical Defect"` → `physical_defect`, `85` → `0.85`, `"Not provided"` → `null`, `"45 years"` → `45`) but
+rejects values that do not fit the target type (`"maybe"` for a boolean, `"forty-two"` for an age,
+`"Packaging Defect"` for an enum), so a bad value can never turn into an accidental null.
 
 ### Groq model note
 
@@ -329,7 +331,7 @@ labels it "AI-Assisted Risk Assessment".
 
 ```bash
 cd backend
-.venv\Scripts\python -m pytest -q          # 52 unit/API tests, no network or Postgres needed
+.venv\Scripts\python -m pytest -q          # 67 unit/API tests, no network or Postgres needed
 .venv\Scripts\python scripts/probe_models.py   # which models this key can use + one JSON-mode call
 .venv\Scripts\python scripts/e2e.py            # real Groq + PostgreSQL run against http://localhost:8000
 ```
@@ -365,4 +367,5 @@ against the live stack and asserts that unrelated fields are untouched by edits.
 - `gemma2-9b-it` (and the llama-3.x alternatives) have been shut down by Groq; the fallback model is used whenever Groq rejects the configured one, and `/api/health` says so.
 - Small models occasionally miss a field; the co-pilot reports missing fields so they can be added by chat.
 - Clearing a field requires an explicit request ("remove the phone number"); model-emitted nulls are ignored by design.
+- The AI risk assessment (severity class etc.) is not editable through chat; it is regenerated when complaint or patient facts change.
 - The risk assessment is advisory and must be reviewed by the quality unit.

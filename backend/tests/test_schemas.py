@@ -22,6 +22,18 @@ def test_llm_formatting_quirks_are_normalised():
     assert data.patient.hospitalization_required is False
 
 
+@pytest.mark.parametrize("section, field, value", [
+    ("complaint", "defect_category", "Broken tablets"),
+    ("complainant", "contact_channel", "carrier pigeon"),
+    ("patient", "patient_gender", "yes"),
+    ("patient", "patient_age", "forty-two"),
+    ("patient", "patient_age", True),
+])
+def test_unknown_enum_values_and_bad_numbers_are_rejected(section, field, value):
+    with pytest.raises(ValidationError):
+        ComplaintData.model_validate({section: {field: value}})
+
+
 def test_missing_fields_stay_null():
     data = ComplaintData.model_validate({"product": {"batch_number": "B1"}})
     assert data.complainant.name is None and data.product.expiry_date is None
