@@ -27,3 +27,6 @@ Thumbs.db
 # Local data
 *.db
 *.log
+
+# Local tooling
+.claude/

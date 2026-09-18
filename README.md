@@ -167,7 +167,7 @@ flowchart LR
 
 | # | Step | Where | What to say |
 |---|---|---|---|
-| 1 | User types a message or drops a PDF | `frontend/src/...` (Redux thunk) | The form is never typed into; state only changes from validated API responses. |
+| 1 | User types a message or drops a PDF | `frontend/src/components/Copilot.jsx` → `store.js` thunks `sendMessage` / `uploadDocument` | The form is never typed into; Redux state only changes from validated API responses. `sendMessage` sends the current `complaint.id` so the backend knows whether an EDIT is possible. |
 | 2 | Request arrives | `backend/app/api/complaints.py` → `chat()` / `upload()` | `ChatRequest` is validated by FastAPI. If `complaint_id` is given the record is loaded (404 if not). `upload()` runs `documents.extract_pdf_text` (pypdf) first. |
 | 3 | Graph runs | `backend/app/ai/graph.py` → `run_copilot()` | `StateGraph`: `START → route → {log, edit, extract}`; `log`/`extract` always go to `assess_risk`; `edit` only if the patch touched `complaint` or `patient`. No hand-written router anywhere else. |
 | 4 | Intent | `backend/app/ai/nodes.py` → `route()` | One model call returning `RouterDecision {intent}`. Documents are marked `[Uploaded document]`. |
@@ -177,7 +177,7 @@ flowchart LR
 | 7 | Risk | `nodes.py` → `assess_risk()` | `RiskAssessment {severity_class I/II/III, reason, actions, follow-up, confidence}` + fixed disclaimer. |
 | 8 | Persist | `api/complaints.py` → `_persist()` + `crud.py` | LOG/EXTRACT → `crud.create` (new row). EDIT → `crud.update` (merge into JSONB sections). This is the only place AI results are written. |
 | 9 | Response | `schemas.py` → `CopilotResponse` | `{intent, message, complaint_id, complaint, patch?, risk_assessment?}` — `complaint` is always the full persisted record built from the row (`Complaint.model_validate(record)`). |
-| 10 | State | Redux slice | Replaces `complaint`/`risk_assessment` from the response; the form re-renders; `patch` keys are highlighted as "just updated". |
+| 10 | State | `frontend/src/store.js` → `settled` reducer | Replaces `complaint` and `patch` from the response and appends the reply (with its intent) and, if present, a risk card to the chat. `ComplaintForm.jsx` renders straight from `complaint`; fields present in `patch` get the "updated" highlight. |
 
 Where the boundaries are: the model only ever produces JSON (5); Pydantic decides what is valid (5, 6b);
 `merge.py` decides what may change (6b); `crud.py` decides what is stored (8). Failures are plain
@@ -187,7 +187,7 @@ exceptions mapped to HTTP codes in `main.py` (`STATUS`), so no endpoint has a tr
 
 | Layer | Choice |
 |---|---|
-| Frontend | React 18, Redux Toolkit, Tailwind CSS, Inter font (Vite) |
+| Frontend | React 19, Redux Toolkit 2, Tailwind CSS 4, Inter font (Vite 8) |
 | Backend | Python 3.12+, FastAPI, SQLAlchemy 2, Pydantic 2 |
 | AI | LangGraph 1.2, LangChain Groq 1.1, Groq (`gemma2-9b-it` configured → `openai/gpt-oss-20b` fallback) |
 | Documents | pypdf (text-based PDFs; OCR out of scope) |
@@ -214,7 +214,17 @@ backend/
   tests/               unit + API contract tests (SQLite, stubbed graph)
   scripts/e2e.py       real Groq + PostgreSQL end-to-end check
   requirements.txt · .env.example
-frontend/              React app (see Frontend setup)
+frontend/
+  src/
+    main.jsx           React root + Redux Provider
+    App.jsx            header (backend/model status), 60/40 layout
+    store.js           Redux Toolkit slice: complaint, patch, messages, busy; sendMessage / uploadDocument thunks
+    api.js             the three fetch calls (/api/chat, /api/upload, /api/health)
+    components/
+      ComplaintForm.jsx  read-only QMS form driven by the complaint record; highlights patched fields
+      RiskAssessment.jsx section 5: severity badge, reasoning, actions, follow-up, confidence
+      Copilot.jsx        chat history, intent chips, risk cards, input, PDF button + drag-and-drop
+  vite.config.js       React + Tailwind plugins; proxies /api to the backend in dev
 samples/               fictional demo complaint PDFs + generator
 docker-compose.yml     PostgreSQL 16
 ```
@@ -264,7 +274,8 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173.
+Open http://localhost:5173. The Vite dev server proxies `/api` to `http://localhost:8000`, so no
+frontend configuration is needed; for a production build set `VITE_API_URL` to the backend origin.
 
 ## API
 
@@ -390,7 +401,7 @@ against the live stack and asserts that unrelated fields are untouched by edits.
 
 ## Demo flow
 
-1. Open the app — empty form, co-pilot ready.
+1. Open the app — empty form, co-pilot ready ("Try a sample complaint" fills the message below).
 2. Paste the Paracetamol complaint above → form fills, risk assessment appears (Class III).
 3. "Actually change the batch number to PCM24099." → only that field changes; reply names the change.
 4. "The complainant's email is rahul@example.com" → nested field updated, everything else intact.
