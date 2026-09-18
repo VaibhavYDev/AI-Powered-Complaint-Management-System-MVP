@@ -7,7 +7,7 @@ from typing import Literal, TypedDict
 from ..merge import apply_patch, describe_changes, patch_from
 from ..schemas import ComplaintData, EditProposal, Intent, RiskAssessment, RouterDecision
 from . import prompts
-from .llm import structured
+from .llm import strict_mode, structured
 
 log = logging.getLogger(__name__)
 
@@ -39,13 +39,13 @@ def route(state: GraphState) -> GraphState:
 
 
 def log_complaint(state: GraphState) -> GraphState:
-    draft = structured(ComplaintData, prompts.log_prompt(), state["text"])
+    draft = structured(ComplaintData, prompts.log_prompt(with_guide=not strict_mode()), state["text"])
     _require_content(draft, "I couldn't find any complaint details in that message. Describe the product, batch and problem, or upload the complaint document.")
     return {"draft": draft, "reply": _summarize(draft, "Logged a new complaint")}
 
 
 def extract_complaint(state: GraphState) -> GraphState:
-    draft = structured(ComplaintData, prompts.extract_prompt(), state["text"])
+    draft = structured(ComplaintData, prompts.extract_prompt(with_guide=not strict_mode()), state["text"])
     _require_content(draft, "The document did not contain recognizable complaint information.")
     return {"draft": draft, "reply": _summarize(draft, "Extracted a complaint from the document")}
 
@@ -54,7 +54,7 @@ def edit_complaint(state: GraphState) -> GraphState:
     existing = state.get("existing")
     if not existing:
         raise NoComplaintToEdit("There is no complaint loaded to edit. Log a complaint first or upload a document.")
-    proposal = structured(EditProposal, prompts.edit_prompt(existing), state["text"])
+    proposal = structured(EditProposal, prompts.edit_prompt(existing, with_guide=not strict_mode()), state["text"])
     patch = patch_from(proposal)
     ignored = f" Not an editable complaint field: {', '.join(proposal.unknown_fields())}." if proposal.unknown_fields() else ""
     if not patch:

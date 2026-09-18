@@ -205,7 +205,7 @@ FIELD_SECTION: dict[str, str] = {
 
 class FieldChange(BaseModel):
     field: str = Field(description="canonical field name from the schema, e.g. 'batch_number'")
-    value: str | int | float | bool | None = Field(description="the new value; null is ignored")
+    value: str | int | bool | None = Field(description="the new value; null is ignored")
 
 
 class EditProposal(BaseModel):

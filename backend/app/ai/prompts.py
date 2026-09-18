@@ -1,5 +1,7 @@
 """Prompts for the graph nodes. The field guide is generated from the canonical schema,
-so adding a field to schemas.py automatically teaches the model about it."""
+so adding a field to schemas.py automatically teaches the model about it. In strict
+JSON-Schema mode the schema itself travels with the request, so the guide is only
+embedded for JSON-object-mode models (`with_guide=False` saves ~600 tokens per call)."""
 
 import json
 from datetime import date
@@ -36,17 +38,18 @@ Rules:
 - Dates must be ISO YYYY-MM-DD. Resolve relative dates such as "today" or "yesterday" using today's date: {today}.
 - Copy identifiers (batch, lot, phone, email) exactly as written.
 - Do not put a value in more than one field. lot_number is only for a lot number stated separately from the batch number.
-- Output a single JSON object with exactly this structure (all four sections, every field present):
+- Output a single JSON object with the four sections complainant, product, complaint and patient, every field present.
 {guide}"""
 
 ROUTER_PROMPT = """\
 You are the intent router for a pharmaceutical customer-complaint co-pilot.
 Classify the user input into exactly one intent and answer with JSON: {"intent": "LOG" | "EDIT" | "EXTRACT"}.
 
-- LOG: the user describes a new customer complaint in their own words or pastes a complaint email/message.
+- LOG: the user describes a customer complaint itself (who reported it, which product/batch, what went wrong) or pastes a complaint email/message.
   Example: "Customer reported broken tablets from batch B123."
-- EDIT: the user asks to change, correct, add or update specific field(s) of the complaint that is currently loaded.
-  Examples: "Change the batch number to B999.", "Actually the customer's email is a@b.com", "Set sample available to yes".
+- EDIT: the user asks to change, correct, add, update or remove specific field value(s) of a complaint record.
+  Examples: "Change the batch number to B999.", "Actually the customer's email is a@b.com", "Set sample available to yes", "Remove the phone number".
+  Classify such requests as EDIT even when no complaint is loaded; the application handles that case.
 - EXTRACT: the input is the text of an uploaded complaint document (PDF), marked with [Uploaded document].
 
 Context: {context}
@@ -80,9 +83,7 @@ Rules:
 - Use the field names and value formats from the schema below (dates YYYY-MM-DD, booleans true/false, enums exactly as listed). Today is {today}.
 - If the request maps to no field, return {{"changes": [], "clear": []}}.
 
-Schema:
 {guide}
-
 Current complaint record:
 {complaint}"""
 
@@ -120,21 +121,25 @@ RISK_SCHEMA = json.dumps(
 def router_prompt(has_complaint: bool, source: str) -> str:
     context = (
         f"input source = {'uploaded document' if source == 'document' else 'chat message'}; "
-        f"a complaint is {'currently loaded' if has_complaint else 'NOT loaded (EDIT is impossible)'}."
+        f"{'a complaint record is currently loaded' if has_complaint else 'no complaint record is loaded yet'}."
     )
     return ROUTER_PROMPT.replace("{context}", context)
 
 
-def log_prompt() -> str:
-    return LOG_PROMPT.format(today=date.today().isoformat(), guide=field_guide())
+def _guide(with_guide: bool, heading: str) -> str:
+    return f"{heading}\n{field_guide()}\n" if with_guide else ""
 
 
-def extract_prompt() -> str:
-    return EXTRACT_PROMPT.format(today=date.today().isoformat(), guide=field_guide())
+def log_prompt(with_guide: bool = True) -> str:
+    return LOG_PROMPT.format(today=date.today().isoformat(), guide=_guide(with_guide, "Structure:"))
 
 
-def edit_prompt(complaint: dict) -> str:
-    return EDIT_PROMPT.format(today=date.today().isoformat(), guide=field_guide(), complaint=json.dumps(complaint, indent=2))
+def extract_prompt(with_guide: bool = True) -> str:
+    return EXTRACT_PROMPT.format(today=date.today().isoformat(), guide=_guide(with_guide, "Structure:"))
+
+
+def edit_prompt(complaint: dict, with_guide: bool = True) -> str:
+    return EDIT_PROMPT.format(today=date.today().isoformat(), guide=_guide(with_guide, "Schema:"), complaint=json.dumps(complaint, indent=2))
 
 
 def risk_prompt() -> str:

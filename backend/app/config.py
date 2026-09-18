@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     # Current Groq production model. openai/gpt-oss-120b is the larger option.
     # (llama-3.1-8b-instant / llama-3.3-70b-versatile were shut down for free/dev tiers on 2026-08-16.)
     groq_fallback_model: str = "openai/gpt-oss-20b"
+    # gpt-oss reasoning effort (low|medium|high). Low keeps free-tier token budgets in check.
+    groq_reasoning_effort: str = "low"
     frontend_url: str = "http://localhost:5173"
     max_upload_bytes: int = 10 * 1024 * 1024
     max_document_chars: int = 12_000

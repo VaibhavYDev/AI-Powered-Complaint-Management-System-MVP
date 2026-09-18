@@ -1,5 +1,5 @@
 """Check what Groq actually serves for this key and that the fallback model works in
-JSON mode with the same call path the app uses.
+the structured-output method the app would use for it (strict JSON Schema for gpt-oss).
 
     cd backend && .venv/Scripts/python scripts/probe_models.py
 """
@@ -48,4 +48,5 @@ result = llm.structured(
     'Extract the product, batch number and a severity class ("I", "II" or "III") from the message. Answer with JSON only.',
     "Chipped Paracetamol 500 mg tablets from batch PCM24031, no patient harm.",
 )
-print(f"JSON-mode call via {llm.model_status()['active_model']} in {time.perf_counter() - t:.1f}s -> {result.model_dump()}")
+active = llm.model_status()["active_model"]
+print(f"structured call via {active} using method={llm.output_method(active)} in {time.perf_counter() - t:.1f}s -> {result.model_dump()}")

@@ -117,15 +117,26 @@ def test_strict_schema_is_derived_from_pydantic_and_groq_compliant(model):
     assert set(schema["properties"]) == set(model.model_fields)  # nothing hand-written or dropped
 
 
-def test_strict_schema_keeps_enums_and_date_hints():
+def test_strict_schema_uses_groq_accepted_union_forms():
+    # Rules Groq enforced live: nullable unions as type lists (no anyOf), nullable enums inlined with
+    # null, no integer/number overlap, unused $defs dropped.
     schema = llm.strict_json_schema(ComplaintData)
-    assert schema["$defs"]["DefectCategory"]["enum"][0] == "physical_defect"
+    category = schema["$defs"]["ComplaintDetails"]["properties"]["defect_category"]
+    assert category["type"] == ["string", "null"] and category["enum"][0] == "physical_defect" and category["enum"][-1] is None
+    assert schema["$defs"]["Patient"]["properties"]["patient_age"]["type"] == ["integer", "null"]
     assert "(YYYY-MM-DD)" in schema["$defs"]["Product"]["properties"]["expiry_date"]["description"]
+    assert set(schema["$defs"]) == {"Complainant", "ComplaintDetails", "Patient", "Product"}
+
+    value = llm.strict_json_schema(EditProposal)["$defs"]["FieldChange"]["properties"]["value"]
+    assert value["type"] == ["string", "integer", "boolean", "null"]
+    for model in (RouterDecision, ComplaintData, EditProposal, RiskAssessment):
+        assert "anyOf" not in json.dumps(llm.strict_json_schema(model))
 
 
 def test_binding_sends_strict_json_schema_for_gpt_oss(monkeypatch):
     monkeypatch.setattr(llm, "_active_model", FALLBACK)
     runnable = llm._runnable(RouterDecision)
+    assert runnable.first.bound.reasoning_effort == settings.groq_reasoning_effort
     response_format = runnable.first.kwargs["response_format"]
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["strict"] is True
@@ -136,7 +147,10 @@ def test_binding_sends_strict_json_schema_for_gpt_oss(monkeypatch):
 
 def test_binding_uses_json_object_mode_for_other_models(monkeypatch):
     monkeypatch.setattr(llm, "_active_model", "gemma2-9b-it")
-    assert llm._runnable(RouterDecision).first.kwargs["response_format"] == {"type": "json_object"}
+    runnable = llm._runnable(RouterDecision)
+    assert runnable.first.kwargs["response_format"] == {"type": "json_object"}
+    assert runnable.first.bound.reasoning_effort is None  # gpt-oss-only parameter
+    assert not llm.strict_mode()
 
 
 # --- structured(): validation, retry, fallback, no key --------------------------------------

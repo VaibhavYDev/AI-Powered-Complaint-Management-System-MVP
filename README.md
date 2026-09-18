@@ -100,8 +100,11 @@ are Pydantic models in `schemas.py`; `ai/llm.py` chooses the Groq output method 
   `with_structured_output(strict_json_schema(Model), method="json_schema", strict=True)`.
   The schema is generated from the Pydantic model (`model_json_schema()`) and adjusted to
   Groq's strict subset: every property required, `additionalProperties: false` on each object,
-  unsupported keywords (`default`, `minLength`, `minimum`, `format`, …) removed, date fields
-  annotated `(YYYY-MM-DD)`. There is no second, hand-written schema.
+  nullable fields written as `type: ["string", "null"]` (Groq rejects `anyOf` unions), nullable
+  enums inlined with `null`, no `integer`/`number` overlap, unsupported keywords (`default`,
+  `minLength`, `minimum`, `format`, …) removed, date fields annotated `(YYYY-MM-DD)`. There is
+  no second, hand-written schema. In strict mode the schema travels with the request, so the
+  prompts omit the field guide they embed for JSON-object-mode models (~600 tokens per call).
 - **any other model → JSON Object Mode** — `with_structured_output(method="json_mode")`.
 
 In both cases the model's JSON is validated by the same Pydantic model (`Model.model_validate`),
@@ -195,6 +198,7 @@ Copy `backend/.env.example` to `backend/.env` and fill in your key. Never commit
 | `GROQ_API_KEY` | Groq API key |
 | `GROQ_MODEL` | `gemma2-9b-it` (assignment default) |
 | `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` — current Groq model used if `GROQ_MODEL` is decommissioned (`openai/gpt-oss-120b` for the larger option) |
+| `GROQ_REASONING_EFFORT` | `low` (default) / `medium` / `high` — gpt-oss only; `low` keeps free-tier token budgets in check |
 | `FRONTEND_URL` | CORS origin of the React dev server (`http://localhost:5173`) |
 
 ### 3. Backend
@@ -369,3 +373,6 @@ against the live stack and asserts that unrelated fields are untouched by edits.
 - Clearing a field requires an explicit request ("remove the phone number"); model-emitted nulls are ignored by design.
 - The AI risk assessment (severity class etc.) is not editable through chat; it is regenerated when complaint or patient facts change.
 - The risk assessment is advisory and must be reviewed by the quality unit.
+- Free-tier Groq keys are limited to ~8k tokens/minute on `gpt-oss-20b`; a LOG costs ~3.5k tokens
+  (router + extraction + risk). Bursts return 429s, which the Groq SDK retries with back-off
+  (`max_retries=5`), so rapid-fire requests get slower rather than failing.

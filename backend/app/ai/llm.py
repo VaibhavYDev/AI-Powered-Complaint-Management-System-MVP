@@ -92,11 +92,31 @@ def _set_reason(reason: str) -> None:
 
 
 def strict_json_schema(model: type[BaseModel]) -> dict:
-    """Groq strict mode needs every property required and additionalProperties=false on
-    each object, and only a subset of keywords. Derived from the Pydantic model."""
+    """Groq strict mode needs every property required, additionalProperties=false on
+    each object, nullable/enum unions written as type lists, and only a subset of
+    keywords. Derived from the Pydantic model."""
+    raw = model.model_json_schema()
+    defs = raw.get("$defs", {})
 
     def is_date(prop: dict) -> bool:
         return prop.get("format") == "date" or any(b.get("format") == "date" for b in prop.get("anyOf", []))
+
+    def flatten_union(prop: dict) -> dict:
+        # anyOf[{type: X}, {type: null}] -> type [X, null]; anyOf[{$ref: Enum}, null] -> inline enum + null.
+        types, enum = [], None
+        for branch in prop.get("anyOf", []):
+            target = defs.get(branch["$ref"].rsplit("/", 1)[-1]) if "$ref" in branch else branch
+            if target is None or not isinstance(target.get("type"), str) or (set(target) - {"type", "enum", "format", "description", "title"}):
+                return prop  # object unions etc. are left alone
+            types.append(target["type"])
+            enum = target.get("enum", enum)
+        if not types:
+            return prop
+        out = {key: value for key, value in prop.items() if key != "anyOf"}
+        out["type"] = types
+        if enum is not None:
+            out["enum"] = enum + ([None] if "null" in types else [])
+        return out
 
     def walk(node):
         if isinstance(node, list):
@@ -106,12 +126,18 @@ def strict_json_schema(model: type[BaseModel]) -> dict:
         if node.get("type") == "object" and "properties" in node:
             node["required"] = list(node["properties"])
             node["additionalProperties"] = False
-            for prop in node["properties"].values():
+            for name, prop in node["properties"].items():
                 if is_date(prop):
                     prop["description"] = (prop.get("description", "") + " (YYYY-MM-DD)").strip()
+                node["properties"][name] = flatten_union(prop)
         return {key: walk(value) for key, value in node.items() if key not in UNSUPPORTED_KEYWORDS}
 
-    schema = walk(model.model_json_schema())
+    schema = walk(raw)
+    text = json.dumps(schema)
+    if "$defs" in schema:  # drop definitions nothing references any more (inlined enums)
+        schema["$defs"] = {name: d for name, d in schema["$defs"].items() if f'"#/$defs/{name}"' in text}
+        if not schema["$defs"]:
+            del schema["$defs"]
     schema["title"] = model.__name__
     return schema
 
@@ -120,16 +146,27 @@ def output_method(model: str) -> str:
     return "json_schema" if model in STRICT_SCHEMA_MODELS else "json_mode"
 
 
+def strict_mode() -> bool:
+    return output_method(_active_model) == "json_schema"
+
+
 def _runnable(schema: type[BaseModel]):
-    llm = ChatGroq(model=_active_model, api_key=settings.groq_api_key, temperature=0, max_retries=2)
-    if output_method(_active_model) == "json_schema":
+    # max_retries=5: the SDK backs off on 429s, which free-tier token-per-minute limits produce in bursts.
+    if strict_mode():
+        llm = ChatGroq(model=_active_model, api_key=settings.groq_api_key, temperature=0, max_retries=5,
+                       reasoning_effort=settings.groq_reasoning_effort)
         return llm.with_structured_output(strict_json_schema(schema), method="json_schema", strict=True)
+    llm = ChatGroq(model=_active_model, api_key=settings.groq_api_key, temperature=0, max_retries=5)
     return llm.with_structured_output(method="json_mode")
 
 
 def _error_code(exc: APIStatusError) -> str:
+    return str(_error_field(exc, "code"))
+
+
+def _error_field(exc: APIStatusError, field: str) -> str:
     body = exc.body if isinstance(exc.body, dict) else {}
-    return str((body.get("error") or {}).get("code") or "")
+    return str((body.get("error") or {}).get(field) or "")
 
 
 def _call(schema: type[T], runnable, messages) -> T:
@@ -172,4 +209,4 @@ def structured(schema: type[T], system_prompt: str, user_content: str) -> T:
         if code in UNAVAILABLE_CODES and _active_model != settings.groq_fallback_model:
             _switch_to_fallback(code)  # safety net if the model disappears after startup
             return structured(schema, system_prompt, user_content)
-        raise AIProviderError(f"AI provider error ({exc.status_code}): {code or 'request failed'}.") from exc
+        raise AIProviderError(f"AI provider error ({exc.status_code}): {code or _error_field(exc, 'message')[:200] or 'request failed'}") from exc

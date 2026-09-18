@@ -64,8 +64,40 @@ check(after["risk_assessment"] == before["risk_assessment"], "risk assessment un
 
 # nested EDIT
 r = client.post("/api/chat", json={"message": "The complainant's email is rahul@example.com", "complaint_id": cid})
+show("EDIT nested", {k: v for k, v in r.json().items() if k != "complaint"})
 check(r.status_code == 200 and r.json()["patch"] == {"complainant": {"email": "rahul@example.com"}}, "nested email patch")
 check(r.json()["complaint"]["product"]["batch_number"] == "PCM24099", "earlier edit preserved")
+check(r.json()["complaint"]["complainant"]["name"] == "Rahul Sharma", "complainant name preserved")
+
+# multi-field EDIT
+r = client.post("/api/chat", json={"message": "Set the strength to 650 mg, the dosage form to film-coated tablet and the manufacturer to Zenith Pharma.", "complaint_id": cid})
+show("EDIT multi-field", {k: v for k, v in r.json().items() if k != "complaint"})
+check(r.status_code == 200, f"multi-field EDIT status {r.status_code}")
+patch = r.json()["patch"]
+check(set(patch) == {"product"} and set(patch["product"]) == {"strength", "dosage_form", "manufacturer"}, "patch has exactly the three product fields")
+prod = r.json()["complaint"]["product"]
+check(prod["batch_number"] == "PCM24099" and prod["product_name"] == before["product"]["product_name"], "batch and product name untouched")
+check(r.json()["complaint"]["complainant"]["email"] == "rahul@example.com", "nested edit preserved")
+
+# explicit clear
+r = client.post("/api/chat", json={"message": "Remove the complainant's email address.", "complaint_id": cid})
+show("EDIT clear", {k: v for k, v in r.json().items() if k != "complaint"})
+check(r.status_code == 200 and r.json()["patch"] == {"complainant": {"email": None}}, "explicit clear -> email null")
+check(r.json()["complaint"]["complainant"]["name"] == "Rahul Sharma", "name survives the clear")
+check(r.json()["complaint"]["product"]["strength"] == "650 mg", "multi-field edit preserved")
+check(r.json()["risk_assessment"] is None, "no re-assessment for non-risk edits")
+
+# risk-relevant EDIT triggers a fresh assessment
+r = client.post("/api/chat", json={"message": "Update: the customer actually swallowed a broken tablet, needed medical attention and was hospitalised overnight.", "complaint_id": cid})
+show("EDIT risk-relevant", {k: v for k, v in r.json().items() if k != "complaint"})
+check(r.status_code == 200 and "patient" in r.json()["patch"], "patient section patched")
+check(r.json()["complaint"]["patient"]["hospitalization_required"] is True, "hospitalization captured")
+check(r.json()["risk_assessment"] is not None, "risk re-assessed after patient facts changed")
+check(r.json()["risk_assessment"]["severity_class"] in ("I", "II"), f"severity escalated to {r.json()['risk_assessment']['severity_class']}")
+check(r.json()["complaint"]["product"]["batch_number"] == "PCM24099", "product data untouched by patient edit")
+
+stored = client.get(f"/api/complaints/{cid}").json()
+check(stored["product"]["batch_number"] == "PCM24099" and stored["complainant"]["email"] is None and stored["patient"]["hospitalization_required"] is True, "all edits persisted in PostgreSQL")
 
 # EXTRACT
 pdf = SAMPLES / "complaint_02_adverse_event.pdf"
@@ -89,4 +121,4 @@ check(r.status_code == 415, f"non-PDF upload -> {r.status_code}")
 r = client.post("/api/upload", files={"file": ("x.pdf", b"%PDF-1.4 broken", "application/pdf")})
 check(r.status_code == 400, f"corrupt PDF -> {r.status_code}: {r.json()['detail']}")
 
-print("\nAll end-to-end checks passed. Model in use:", client.get("/api/health").json()["model"])
+print("\nAll end-to-end checks passed. Model in use:", client.get("/api/health").json()["active_model"])
