@@ -94,6 +94,13 @@ export default function ComplaintForm() {
         </div>
       </header>
 
+      {!complaint && (
+        <p className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm text-indigo-900">
+          This form is filled in by the AIVOA Co-pilot. Describe the complaint or upload a PDF report on the right —
+          extracted fields appear here and the AI-assisted risk assessment in section 5. Corrections are made by chat too.
+        </p>
+      )}
+
       {SECTIONS.map(({ key, title, fields }, i) => {
         const data = complaint?.[key] ?? {};
         const filled = fields.filter(([f]) => data[f] != null).length;

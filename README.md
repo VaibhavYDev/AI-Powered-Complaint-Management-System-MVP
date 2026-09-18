@@ -12,6 +12,19 @@ risk assessment. The form on the left is a live view of that structured state.
 > claim of regulatory compliance. The risk assessment is an AI-assisted triage aid for a human
 > reviewer, not a regulatory determination.
 
+## Screenshots
+
+| Empty intake | LOG → populated form + risk assessment |
+|---|---|
+| ![Empty state](screenshots/01-empty-state.png) | ![Logged complaint](screenshots/02-log-populated.png) |
+
+| EDIT → only the batch number changes | EXTRACT → complaint from a PDF |
+|---|---|
+| ![Edit highlight](screenshots/04-edit-highlight.png) | ![PDF extraction](screenshots/05-pdf-extract.png) |
+
+Section 5 in full: [screenshots/03-risk-assessment.png](screenshots/03-risk-assessment.png).
+Captured from the running application against the live backend.
+
 ## Problem
 
 In API and finished-dosage-form manufacturing, every customer complaint must be recorded,
@@ -226,7 +239,9 @@ frontend/
       Copilot.jsx        chat history, intent chips, risk cards, input, PDF button + drag-and-drop
   vite.config.js       React + Tailwind plugins; proxies /api to the backend in dev
 samples/               fictional demo complaint PDFs + generator
+screenshots/           captures of the running app (used above)
 docker-compose.yml     PostgreSQL 16
+DEMO_SCRIPT.md · CODE_WALKTHROUGH.md · SUBMISSION_CHECKLIST.md
 ```
 
 ## Setup
@@ -400,6 +415,9 @@ stubbed graph). `scripts/e2e.py` runs LOG → EDIT → nested EDIT → EXTRACT p
 against the live stack and asserts that unrelated fields are untouched by edits.
 
 ## Demo flow
+
+Recording scripts: [DEMO_SCRIPT.md](DEMO_SCRIPT.md) (product demo) and
+[CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md) (technical walkthrough).
 
 1. Open the app — empty form, co-pilot ready ("Try a sample complaint" fills the message below).
 2. Paste the Paracetamol complaint above → form fills, risk assessment appears (Class III).
