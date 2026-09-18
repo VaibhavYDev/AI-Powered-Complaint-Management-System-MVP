@@ -140,6 +140,49 @@ and runs one structured call through the app's own code path.
 `openai/gpt-oss-20b` supports Groq Structured Outputs (strict JSON Schema, used here) and returns
 its reasoning in a separate `reasoning` field, so `content` is pure JSON for the parser.
 
+## Code walkthrough guide
+
+One request, end to end. Each step is one file and one function, in the order the code runs.
+
+```mermaid
+flowchart LR
+    UI[React form + Co-pilot<br/>Redux slice] -->|POST /api/chat<br/>POST /api/upload| API[api/complaints.py<br/>chat / upload]
+    API -->|load existing record| DB[(PostgreSQL<br/>models.py · crud.py)]
+    API -->|run_copilot| G[ai/graph.py<br/>LangGraph]
+    G --> R[route]
+    R -->|LOG| L[log_complaint]
+    R -->|EDIT| E[edit_complaint]
+    R -->|EXTRACT| X[extract_complaint]
+    L --> RA[assess_risk]
+    X --> RA
+    E -->|complaint/patient changed| RA
+    E -->|otherwise| P
+    RA --> P[_persist<br/>crud.create / crud.update]
+    P --> DB
+    P -->|CopilotResponse| UI
+    subgraph every node
+        S[ai/llm.py structured<br/>Groq strict JSON Schema → Pydantic]
+    end
+```
+
+| # | Step | Where | What to say |
+|---|---|---|---|
+| 1 | User types a message or drops a PDF | `frontend/src/...` (Redux thunk) | The form is never typed into; state only changes from validated API responses. |
+| 2 | Request arrives | `backend/app/api/complaints.py` → `chat()` / `upload()` | `ChatRequest` is validated by FastAPI. If `complaint_id` is given the record is loaded (404 if not). `upload()` runs `documents.extract_pdf_text` (pypdf) first. |
+| 3 | Graph runs | `backend/app/ai/graph.py` → `run_copilot()` | `StateGraph`: `START → route → {log, edit, extract}`; `log`/`extract` always go to `assess_risk`; `edit` only if the patch touched `complaint` or `patient`. No hand-written router anywhere else. |
+| 4 | Intent | `backend/app/ai/nodes.py` → `route()` | One model call returning `RouterDecision {intent}`. Documents are marked `[Uploaded document]`. |
+| 5 | Model call | `backend/app/ai/llm.py` → `structured()` | The **only** place raw model output exists. gpt-oss → Groq strict JSON Schema derived from the Pydantic model (`strict_json_schema`); other models → JSON Object Mode. Result → `Model.model_validate()`. One corrective retry, then `502`. Model fallback lives here too (`resolve_model`). |
+| 6a | LOG / EXTRACT | `nodes.py` → `log_complaint()` / `extract_complaint()` | Output type is the canonical `ComplaintData`; unstated facts are `null`; empty extraction → `422`. Reply text is built deterministically (`_summarize`). |
+| 6b | EDIT | `nodes.py` → `edit_complaint()` + `merge.py` | Model returns `EditProposal {changes:[{field,value}], clear:[...]}`. `EditProposal` validates each value through the real target field; `merge.patch_from` builds `{section:{field:value}}`; `apply_patch` merges — unlisted fields are untouched; nulls never erase; clears are explicit. |
+| 7 | Risk | `nodes.py` → `assess_risk()` | `RiskAssessment {severity_class I/II/III, reason, actions, follow-up, confidence}` + fixed disclaimer. |
+| 8 | Persist | `api/complaints.py` → `_persist()` + `crud.py` | LOG/EXTRACT → `crud.create` (new row). EDIT → `crud.update` (merge into JSONB sections). This is the only place AI results are written. |
+| 9 | Response | `schemas.py` → `CopilotResponse` | `{intent, message, complaint_id, complaint, patch?, risk_assessment?}` — `complaint` is always the full persisted record built from the row (`Complaint.model_validate(record)`). |
+| 10 | State | Redux slice | Replaces `complaint`/`risk_assessment` from the response; the form re-renders; `patch` keys are highlighted as "just updated". |
+
+Where the boundaries are: the model only ever produces JSON (5); Pydantic decides what is valid (5, 6b);
+`merge.py` decides what may change (6b); `crud.py` decides what is stored (8). Failures are plain
+exceptions mapped to HTTP codes in `main.py` (`STATUS`), so no endpoint has a try/except.
+
 ## Technology stack
 
 | Layer | Choice |
