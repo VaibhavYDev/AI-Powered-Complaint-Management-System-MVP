@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from groq import BadRequestError, InternalServerError
+from groq import APIConnectionError, BadRequestError, InternalServerError
 from langchain_core.exceptions import OutputParserException
 from langchain_groq.chat_models import _STRICT_STRUCTURED_OUTPUT_MODELS
 from pydantic import BaseModel, Field
@@ -37,7 +37,7 @@ def groq(monkeypatch):
             return SimpleNamespace(data=[SimpleNamespace(id=m) for m in served])
 
         client = SimpleNamespace(models=SimpleNamespace(list=list_models))
-        monkeypatch.setattr(llm, "Groq", lambda api_key: client)
+        monkeypatch.setattr(llm, "Groq", lambda api_key, **kwargs: client)
         return calls
 
     monkeypatch.setattr(llm, "_active_model", settings.groq_model)
@@ -81,8 +81,12 @@ def test_reports_when_fallback_is_also_unavailable(groq):
     assert f"fallback {FALLBACK} also unavailable" in status["fallback_reason"]
 
 
-def test_transient_probe_error_leaves_configuration_alone(groq):
-    groq(error=groq_error(InternalServerError, 500, ""))
+@pytest.mark.parametrize("error", [
+    groq_error(InternalServerError, 500, ""),
+    APIConnectionError(request=httpx.Request("GET", "https://api.groq.com")),  # network down at startup must not crash the app
+])
+def test_transient_probe_error_leaves_configuration_alone(groq, error):
+    groq(error=error)
     llm.resolve_model()
     assert llm.model_status() == {"configured_model": "gemma2-9b-it", "active_model": "gemma2-9b-it", "fallback_reason": None}
 
@@ -221,8 +225,12 @@ def test_falls_back_mid_flight_when_model_is_decommissioned(chat, monkeypatch):
     assert llm.model_status()["fallback_reason"] == "model_decommissioned"
 
 
-def test_other_provider_errors_are_reported_not_retried(chat):
-    chat({FALLBACK: [groq_error(InternalServerError, 500, "")]})
+@pytest.mark.parametrize("error", [
+    groq_error(InternalServerError, 500, ""),
+    APIConnectionError(request=httpx.Request("POST", "https://api.groq.com")),
+])
+def test_other_provider_errors_are_reported_not_retried(chat, error):
+    chat({FALLBACK: [error]})
     with pytest.raises(llm.AIProviderError):
         llm.structured(Answer, "sys", "user")
 

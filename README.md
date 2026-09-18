@@ -1,5 +1,14 @@
 # AIVOA Complaint Co-pilot
 
+## 🚀 [Live Demo](https://aivoa-complaint-copilot.onrender.com)
+
+**https://aivoa-complaint-copilot.onrender.com** — open it and click "Try a sample complaint".
+No local setup is required to use the hosted demo.
+
+Hosted on Render as one always-on Docker web service (the React build is served by FastAPI, so the
+UI and the `/api` endpoints share a single origin) with a managed Render PostgreSQL database for
+persistent complaint records. `GET /api/health` reports the database status and the Groq model in use.
+
 AI-powered Customer Complaint intake for a pharmaceutical Quality Management System (QMS).
 Built for the AIVOA "AI Product Engineer (Interns)" Round 1 assignment.
 
@@ -11,20 +20,6 @@ risk assessment. The form on the left is a live view of that structured state.
 > This is an MVP that demonstrates the workflow. It is not a validated GxP system and makes no
 > claim of regulatory compliance. The risk assessment is an AI-assisted triage aid for a human
 > reviewer, not a regulatory determination.
-
-## Live demo
-
-**https://aivoa-complaint-copilot.onrender.com** — nothing to install; open it and click
-"Try a sample complaint".
-
-- Hosted on Render's free tier: the first visit after 15 minutes of inactivity takes ~1 minute to wake up.
-- The demo stores complaints in SQLite inside the container (same code path; local development
-  uses PostgreSQL/JSONB as described below), so records reset whenever the instance restarts.
-- One shared Groq key with a free-tier token budget: if it answers slowly, wait a few seconds
-  between actions.
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/VaibhavYDev/AI-Powered-Complaint-Management-System-MVP)
-— deploys your own copy from `render.yaml` (one Docker web service); the only input is your `GROQ_API_KEY`.
 
 ## Screenshots
 
@@ -255,7 +250,7 @@ frontend/
 samples/               fictional demo complaint PDFs + generator
 screenshots/           captures of the running app (used above)
 docker-compose.yml     PostgreSQL 16 for local development
-Dockerfile · render.yaml   single-container build (frontend served by FastAPI) + Render blueprint for the live demo
+Dockerfile · render.yaml   single-container build (frontend served by FastAPI) + Render blueprint (web service + PostgreSQL)
 DEMO_SCRIPT.md · CODE_WALKTHROUGH.md · SUBMISSION_CHECKLIST.md
 ```
 
@@ -281,7 +276,7 @@ Copy `backend/.env.example` to `backend/.env` and fill in your key. Never commit
 | `GROQ_API_KEY` | Groq API key |
 | `GROQ_MODEL` | `gemma2-9b-it` (assignment default) |
 | `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` — current Groq model used if `GROQ_MODEL` is decommissioned (`openai/gpt-oss-120b` for the larger option) |
-| `GROQ_REASONING_EFFORT` | `low` (default) / `medium` / `high` — gpt-oss only; `low` keeps free-tier token budgets in check |
+| `GROQ_REASONING_EFFORT` | `low` (default) / `medium` / `high` — gpt-oss only; `low` is fastest and uses the fewest tokens |
 | `FRONTEND_URL` | CORS origin of the React dev server (`http://localhost:5173`) |
 
 ### 3. Backend
@@ -307,15 +302,23 @@ npm run dev
 Open http://localhost:5173. The Vite dev server proxies `/api` to `http://localhost:8000`, so no
 frontend configuration is needed; for a production build set `VITE_API_URL` to the backend origin.
 
-### Single container (what the live demo runs)
+### Hosted deployment (what the live demo runs)
+
+`render.yaml` is a Render Blueprint: one always-on Docker web service plus a Render PostgreSQL
+database, with `DATABASE_URL` injected by Render and `GROQ_API_KEY` entered once in the dashboard.
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/VaibhavYDev/AI-Powered-Complaint-Management-System-MVP)
+
+The same image runs anywhere:
 
 ```bash
 docker build -t aivoa-copilot .
-docker run -p 8000:8000 -e GROQ_API_KEY=... -e DATABASE_URL=sqlite:////tmp/aivoa.db aivoa-copilot
+docker run -p 8000:8000 -e GROQ_API_KEY=... -e DATABASE_URL=postgresql://user:pass@host:5432/db aivoa-copilot
 ```
 
 The image builds the React app and FastAPI serves it from `/`, so one URL is the whole product.
-Point `DATABASE_URL` at PostgreSQL to persist data.
+`postgres://` / `postgresql://` URLs from hosting providers are accepted as-is (the psycopg driver
+is selected automatically).
 
 ## API
 

@@ -15,7 +15,7 @@ import json
 import logging
 from typing import TypeVar
 
-from groq import APIStatusError, Groq
+from groq import APIConnectionError, APIError, APIStatusError, Groq
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
@@ -66,9 +66,10 @@ def resolve_model() -> None:
     if not settings.groq_api_key:
         return
     try:
-        served = {m.id for m in Groq(api_key=settings.groq_api_key).models.list().data}
-    except APIStatusError as exc:
-        log.warning("Could not list Groq models (%s); will fall back on demand", exc.status_code)
+        # Short timeout: uvicorn binds the port only after startup, so this must never hang or crash the app.
+        served = {m.id for m in Groq(api_key=settings.groq_api_key, timeout=10, max_retries=1).models.list().data}
+    except APIError as exc:
+        log.warning("Could not list Groq models (%s); will fall back on demand", getattr(exc, "status_code", type(exc).__name__))
         return
     if settings.groq_model in served:
         log.info("Groq model %s is available", settings.groq_model)
@@ -210,3 +211,5 @@ def structured(schema: type[T], system_prompt: str, user_content: str) -> T:
             _switch_to_fallback(code)  # safety net if the model disappears after startup
             return structured(schema, system_prompt, user_content)
         raise AIProviderError(f"AI provider error ({exc.status_code}): {code or _error_field(exc, 'message')[:200] or 'request failed'}") from exc
+    except APIConnectionError as exc:
+        raise AIProviderError("AI provider is unreachable; please try again.") from exc

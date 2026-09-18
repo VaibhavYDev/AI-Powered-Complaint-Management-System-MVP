@@ -1,18 +1,34 @@
-# One-click hosted demo: https://render.com/deploy?repo=<this repository>
+# Render Blueprint for the hosted application: one always-on Docker web service
+# (React build served by FastAPI, same origin for UI and /api) + Render Postgres.
+# Secrets are never here: GROQ_API_KEY is entered in the Render dashboard and
+# DATABASE_URL is injected by Render from the managed database.
 services:
   - type: web
     name: aivoa-complaint-copilot
     runtime: docker
-    plan: free
+    plan: 0.5c-512mb          # smallest paid instance: always on, no spin-down
+    region: oregon
     healthCheckPath: /api/health
     envVars:
       - key: GROQ_API_KEY
-        sync: false          # entered once in the Render dashboard, never committed
+        sync: false
       - key: GROQ_MODEL
         value: gemma2-9b-it
       - key: GROQ_FALLBACK_MODEL
         value: openai/gpt-oss-20b
       - key: GROQ_REASONING_EFFORT
         value: low
+      - key: FRONTEND_URL
+        value: https://aivoa-complaint-copilot.onrender.com
       - key: DATABASE_URL
-        value: sqlite:////tmp/aivoa.db   # zero-config demo storage; point at any PostgreSQL to persist
+        fromDatabase:
+          name: aivoa-postgres
+          property: connectionString
+
+databases:
+  - name: aivoa-postgres
+    plan: 0.1c-256mb          # smallest paid Postgres: persistent, does not expire
+    region: oregon
+    databaseName: aivoa
+    user: aivoa
+    postgresMajorVersion: "16"

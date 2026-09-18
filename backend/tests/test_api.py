@@ -76,3 +76,11 @@ def test_ai_failures_map_to_http(client, fake_graph):
 def test_health(client):
     body = client.get("/api/health").json()
     assert body["database"] == "ok" and body["groq_configured"] is True
+
+
+def test_hosted_postgres_urls_get_the_psycopg_driver():
+    from app.config import Settings
+
+    for url in ("postgres://u:p@host/db", "postgresql://u:p@host/db", "postgresql+psycopg://u:p@host/db"):
+        assert Settings(database_url=url).database_url == "postgresql+psycopg://u:p@host/db"
+    assert Settings(database_url="sqlite:///x.db").database_url == "sqlite:///x.db"

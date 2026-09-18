@@ -1,3 +1,6 @@
+import re
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +20,13 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
     max_upload_bytes: int = 10 * 1024 * 1024
     max_document_chars: int = 12_000
+
+    @field_validator("database_url")
+    @classmethod
+    def _psycopg_driver(cls, url: str) -> str:
+        # Hosted PostgreSQL (e.g. Render) hands out postgres:// or postgresql:// URLs; SQLAlchemy
+        # would look for psycopg2, so name the installed psycopg (v3) driver explicitly.
+        return re.sub(r"^postgres(ql)?://", "postgresql+psycopg://", url)
 
 
 settings = Settings()
