@@ -1,9 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
@@ -67,3 +69,9 @@ def health():
     except OperationalError:
         database = "unavailable"
     return {"database": database, "groq_configured": bool(settings.groq_api_key), **model_status()}
+
+
+# Single-container deployment: serve the built React app from the same origin (see Dockerfile).
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")

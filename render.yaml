@@ -1,0 +1,18 @@
+# One-click hosted demo: https://render.com/deploy?repo=<this repository>
+services:
+  - type: web
+    name: aivoa-complaint-copilot
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false          # entered once in the Render dashboard, never committed
+      - key: GROQ_MODEL
+        value: gemma2-9b-it
+      - key: GROQ_FALLBACK_MODEL
+        value: openai/gpt-oss-20b
+      - key: GROQ_REASONING_EFFORT
+        value: low
+      - key: DATABASE_URL
+        value: sqlite:////tmp/aivoa.db   # zero-config demo storage; point at any PostgreSQL to persist

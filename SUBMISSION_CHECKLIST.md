@@ -4,8 +4,9 @@ Assignment: AIVOA — Round 1 AI Product Engineer (Interns) — AI-Powered Custo
 
 ## Repository
 
-- [ ] GitHub repository created
-- [ ] Repository pushed successfully (`git push -u origin main`)
+- [x] GitHub repository created — https://github.com/VaibhavYDev/AI-Powered-Complaint-Management-System-MVP
+- [x] Repository pushed successfully (`git push -u origin main`)
+- [ ] Live demo deployed via the "Deploy to Render" button and the URL in README verified
 - [ ] README complete (setup, architecture, API, LangGraph flows, demo, limitations)
 - [ ] `.gitignore` verified (`git status --ignored` shows `.env`, `.venv/`, `node_modules/` ignored)
 - [ ] `.env` excluded — only `backend/.env.example` is committed; no keys anywhere in history (`git log -p | grep -i gsk_` is empty)

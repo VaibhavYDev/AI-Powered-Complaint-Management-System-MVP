@@ -12,6 +12,20 @@ risk assessment. The form on the left is a live view of that structured state.
 > claim of regulatory compliance. The risk assessment is an AI-assisted triage aid for a human
 > reviewer, not a regulatory determination.
 
+## Live demo
+
+**https://aivoa-complaint-copilot.onrender.com** — nothing to install; open it and click
+"Try a sample complaint".
+
+- Hosted on Render's free tier: the first visit after 15 minutes of inactivity takes ~1 minute to wake up.
+- The demo stores complaints in SQLite inside the container (same code path; local development
+  uses PostgreSQL/JSONB as described below), so records reset whenever the instance restarts.
+- One shared Groq key with a free-tier token budget: if it answers slowly, wait a few seconds
+  between actions.
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/VaibhavYDev/AI-Powered-Complaint-Management-System-MVP)
+— deploys your own copy from `render.yaml` (one Docker web service); the only input is your `GROQ_API_KEY`.
+
 ## Screenshots
 
 | Empty intake | LOG → populated form + risk assessment |
@@ -240,7 +254,8 @@ frontend/
   vite.config.js       React + Tailwind plugins; proxies /api to the backend in dev
 samples/               fictional demo complaint PDFs + generator
 screenshots/           captures of the running app (used above)
-docker-compose.yml     PostgreSQL 16
+docker-compose.yml     PostgreSQL 16 for local development
+Dockerfile · render.yaml   single-container build (frontend served by FastAPI) + Render blueprint for the live demo
 DEMO_SCRIPT.md · CODE_WALKTHROUGH.md · SUBMISSION_CHECKLIST.md
 ```
 
@@ -291,6 +306,16 @@ npm run dev
 
 Open http://localhost:5173. The Vite dev server proxies `/api` to `http://localhost:8000`, so no
 frontend configuration is needed; for a production build set `VITE_API_URL` to the backend origin.
+
+### Single container (what the live demo runs)
+
+```bash
+docker build -t aivoa-copilot .
+docker run -p 8000:8000 -e GROQ_API_KEY=... -e DATABASE_URL=sqlite:////tmp/aivoa.db aivoa-copilot
+```
+
+The image builds the React app and FastAPI serves it from `/`, so one URL is the whole product.
+Point `DATABASE_URL` at PostgreSQL to persist data.
 
 ## API
 
