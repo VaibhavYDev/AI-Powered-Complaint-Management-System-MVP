@@ -1,14 +1,5 @@
 # AIVOA Complaint Co-pilot
 
-## 🚀 [Live Demo](https://aivoa-complaint-copilot.onrender.com)
-
-**https://aivoa-complaint-copilot.onrender.com** — open it and click "Try a sample complaint".
-No local setup is required to use the hosted demo.
-
-Hosted on Render as one always-on Docker web service (the React build is served by FastAPI, so the
-UI and the `/api` endpoints share a single origin) with a managed Render PostgreSQL database for
-persistent complaint records. `GET /api/health` reports the database status and the Groq model in use.
-
 AI-powered Customer Complaint intake for a pharmaceutical Quality Management System (QMS).
 Built for the AIVOA "AI Product Engineer (Interns)" Round 1 assignment.
 
@@ -20,6 +11,19 @@ risk assessment. The form on the left is a live view of that structured state.
 > This is an MVP that demonstrates the workflow. It is not a validated GxP system and makes no
 > claim of regulatory compliance. The risk assessment is an AI-assisted triage aid for a human
 > reviewer, not a regulatory determination.
+
+## Hosted demo
+
+**https://aivoa-complaint-copilot.onrender.com** — Render free plan, so the service sleeps after
+15 minutes of inactivity and the first visit takes about a minute to wake. It is not always-on.
+
+The deployment is a single container: the React build is served by FastAPI, so the UI and the
+`/api` endpoints share one origin and the browser needs no backend configuration. `render.yaml`
+is the blueprint; `GET /api/health` reports database, schema and model state, and `/api/ready`
+returns 503 until the service can actually serve.
+
+If the link is unresponsive the service needs a sync in the Render dashboard — see
+[DEPLOYMENT.md](DEPLOYMENT.md#restoring-the-render-service).
 
 ## Screenshots
 
@@ -88,7 +92,9 @@ Responsibilities, one place each:
 | Graph nodes: route / log / edit / extract / assess_risk | `backend/app/ai/nodes.py` |
 | Graph wiring | `backend/app/ai/graph.py` |
 | EDIT patch semantics (what may change, what never can) | `backend/app/merge.py` |
-| Persistence | `backend/app/crud.py`, `backend/app/models.py` |
+| Session identity, CSRF, rate limits | `backend/app/auth.py` |
+| Owner-scoped persistence | `backend/app/crud.py`, `backend/app/models.py` |
+| Schema migrations | `backend/alembic/versions/` |
 | HTTP endpoints + error mapping | `backend/app/api/complaints.py`, `backend/app/main.py` |
 
 ### LangGraph workflow
@@ -250,7 +256,7 @@ frontend/
 samples/               fictional demo complaint PDFs + generator
 screenshots/           captures of the running app (used above)
 docker-compose.yml     PostgreSQL 16 for local development
-Dockerfile · render.yaml   single-container build (frontend served by FastAPI) + Render blueprint (web service + PostgreSQL)
+Dockerfile · cloudbuild.yaml · DEPLOYMENT.md   single-container build (frontend served by FastAPI) and the Cloud Run + Neon deployment
 DEMO_SCRIPT.md · CODE_WALKTHROUGH.md · SUBMISSION_CHECKLIST.md
 ```
 
@@ -304,10 +310,10 @@ frontend configuration is needed; for a production build set `VITE_API_URL` to t
 
 ### Hosted deployment (what the live demo runs)
 
-`render.yaml` is a Render Blueprint: one always-on Docker web service plus a Render PostgreSQL
-database, with `DATABASE_URL` injected by Render and `GROQ_API_KEY` entered once in the dashboard.
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/VaibhavYDev/AI-Powered-Complaint-Management-System-MVP)
+Google Cloud Run + Neon PostgreSQL, built from the repository `Dockerfile`. The exact commands,
+cost-safety settings (request-based billing, `min-instances 0`, `max-instances 3`, budget alert)
+and verification steps are in [DEPLOYMENT.md](DEPLOYMENT.md); `cloudbuild.yaml` wires a GitHub →
+Cloud Build → Cloud Run pipeline.
 
 The same image runs anywhere:
 
@@ -318,7 +324,7 @@ docker run -p 8000:8000 -e GROQ_API_KEY=... -e DATABASE_URL=postgresql://user:pa
 
 The image builds the React app and FastAPI serves it from `/`, so one URL is the whole product.
 `postgres://` / `postgresql://` URLs from hosting providers are accepted as-is (the psycopg driver
-is selected automatically).
+is selected automatically) and SSL parameters such as `?sslmode=require` are preserved.
 
 ## API
 
@@ -402,6 +408,28 @@ curl -X POST http://localhost:8000/api/upload -F "file=@samples/complaint_02_adv
 
 Responses always carry a human-readable `detail`; stack traces are never returned.
 
+## Security model
+
+- **Identity**: a signed, HttpOnly session cookie (`SameSite=Lax`, `Secure` when
+  `SECURE_COOKIES=true`). A visitor is given an anonymous workspace automatically, so the demo
+  needs no sign-up; `POST /api/auth/register` and `/login` attach an email and password (bcrypt)
+  to a workspace so it can be reached again.
+- **Authorization**: every complaint has an `owner_id`, and every read and write filters on it
+  inside the query. Another workspace's record returns `404`, so ids cannot be probed. The owner
+  comes from the session cookie and never from the request body.
+- **CSRF**: state-changing requests must echo the session's CSRF token in `X-CSRF-Token`; the
+  token alone is useless without the cookie.
+- **Rate limits**: the model-backed endpoints and session creation are limited per principal and
+  per client address. The limiter is in process memory, so with several instances the effective
+  allowance is per instance.
+- **Schema**: alembic owns the schema (`app/migrate.py` runs `upgrade head` at startup); the
+  application no longer calls `create_all()`. Ownership was added additively, so rows written
+  before it keep their data and belong to nobody rather than being assigned to an account.
+
+Not implemented, and not claimed: separation of duties between author and reviewer, audit
+trails, tenant-level encryption, or any GDPR/GxP compliance position. Hosting region and data
+residency are whatever the deployment target provides and have not been assessed.
+
 ## Data model
 
 One canonical schema (`schemas.py`) is used everywhere:
@@ -432,12 +460,32 @@ labels it "AI-Assisted Risk Assessment".
 
 ```bash
 cd backend
-.venv\Scripts\python -m pytest -q          # 67 unit/API tests, no network or Postgres needed
+.venv\Scripts\python -m pytest -q          # 179 tests; no network and no credentials needed
+
+PostgreSQL-specific migration tests run when a disposable database is available:
+
+```bash
+docker run -d --name pg -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=test -p 55432:5432 postgres:16-alpine
+TEST_POSTGRES_URL=postgresql+psycopg://test:test@localhost:55432/test .venv\Scripts\python -m pytest -q
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm test          # 13 tests (session/CSRF handling, Redux slice)
+npm run build
+```
+
+Every one of these runs in CI (`.github/workflows/ci.yml`) on each pull request, together with a
+smoke test that builds the image, starts it, and checks that complaint data is closed to
+unauthenticated callers
 .venv\Scripts\python scripts/probe_models.py   # which models this key can use + one JSON-mode call
 .venv\Scripts\python scripts/e2e.py            # real Groq + PostgreSQL run against http://localhost:8000
 ```
 
-`tests/` cover schema normalisation/rejection, EDIT patch safety (single/nested/multiple fields,
+`tests/` cover authentication and cross-workspace isolation, migrations, PDF limits,
+schema normalisation/rejection, EDIT patch safety (single/nested/multiple fields,
 nulls never erase data, explicit clear only), PDF validation and the HTTP contract (SQLite with a
 stubbed graph). `scripts/e2e.py` runs LOG → EDIT → nested EDIT → EXTRACT plus the error paths
 against the live stack and asserts that unrelated fields are untouched by edits.

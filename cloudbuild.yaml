@@ -1,0 +1,33 @@
+# Google Cloud Build: build the single-container image from the Dockerfile and deploy it to
+# Cloud Run. Used by `gcloud builds submit` and by a Cloud Build GitHub trigger.
+# Secrets (GROQ_API_KEY, DATABASE_URL) are NOT here: they live on the Cloud Run service and are
+# preserved across deployments.
+substitutions:
+  _SERVICE: aivoa-complaint-copilot
+  _REGION: us-east1
+  _REPO: aivoa
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}", "."]
+  - name: gcr.io/cloud-builders/docker
+    args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"]
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --min-instances=0
+      - --max-instances=3
+      - --memory=512Mi
+      - --cpu=1
+      - --concurrency=20
+      - --timeout=120
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+options:
+  logging: CLOUD_LOGGING_ONLY

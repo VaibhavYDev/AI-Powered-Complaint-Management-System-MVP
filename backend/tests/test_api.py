@@ -2,6 +2,7 @@ from io import BytesIO
 
 from app.ai.llm import AIConfigError, AIOutputError
 from app.ai.nodes import NoComplaintToEdit
+from app.documents import Document
 from app.schemas import Intent
 from tests.conftest import DRAFT, RISK
 
@@ -60,7 +61,7 @@ def test_upload_rejects_non_pdf(client):
 
 def test_upload_extracts(client, fake_graph, monkeypatch):
     fake_graph({"intent": Intent.EXTRACT, "draft": DRAFT, "risk": RISK, "reply": "Extracted."})
-    monkeypatch.setattr("app.api.complaints.extract_pdf_text", lambda data: "Complaint text")
+    monkeypatch.setattr("app.api.complaints.extract_pdf", lambda data: Document(pages=["Complaint text"], page_count=1))
     r = client.post("/api/upload", files={"file": ("complaint.pdf", BytesIO(b"%PDF-1.4"), "application/pdf")})
     assert r.status_code == 200, r.text
     assert r.json()["intent"] == "EXTRACT" and r.json()["complaint"]["source"] == "document"

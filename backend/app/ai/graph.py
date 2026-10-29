@@ -11,7 +11,11 @@ from langgraph.graph import END, START, StateGraph
 from . import nodes
 from .nodes import GraphState
 
+# Edits that can change the hazard and therefore invalidate an existing assessment.
+# In the product section only identity, form, strength and shelf life move the risk;
+# traceability identifiers (batch, lot, manufacturing date) and the manufacturer do not.
 RISK_SECTIONS = {"complaint", "patient"}
+RISK_PRODUCT_FIELDS = {"product_name", "generic_name", "dosage_form", "strength", "expiry_date"}
 
 
 def _dispatch(state: GraphState) -> str:
@@ -19,7 +23,9 @@ def _dispatch(state: GraphState) -> str:
 
 
 def _after_edit(state: GraphState) -> str:
-    return "assess_risk" if RISK_SECTIONS & state["patch"].keys() else END
+    patch = state["patch"]
+    touches_risk = RISK_SECTIONS & patch.keys() or RISK_PRODUCT_FIELDS & patch.get("product", {}).keys()
+    return "assess_risk" if touches_risk else END
 
 
 def build_graph():

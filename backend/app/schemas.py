@@ -5,6 +5,7 @@ columns and the frontend form. Every fact field is optional: the AI must leave
 anything not stated in the source as null rather than guess.
 """
 
+import re
 from datetime import date, datetime
 from enum import Enum
 from typing import Any
@@ -52,6 +53,40 @@ class Intent(str, Enum):
 
 
 NULL_WORDS = {"", "null", "none", "n/a", "na", "unknown", "not stated", "not specified", "not provided", "not mentioned"}
+
+
+AGE_MIN, AGE_MAX = 0, 120
+AGE_NUMBER = re.compile(r"-?\d+(?:[.,]\d+)?")
+NON_YEAR_UNIT = re.compile(r"\b(month|week|day|hour)s?\b", re.IGNORECASE)
+
+
+def parse_age(value: Any) -> Any:
+    """An exact age in whole years, or nothing.
+
+    A source the reader cannot pin down — a range, a date, several numbers, another unit,
+    a fraction — yields None instead of an invented number. A malformed value (text, a
+    boolean, an out-of-range number) is rejected so the model is asked to correct it.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("patient_age must be a whole number of years")
+    if isinstance(value, (int, float)):
+        if float(value).is_integer() and AGE_MIN <= value <= AGE_MAX:
+            return int(value)
+        raise ValueError(f"patient_age must be a whole number between {AGE_MIN} and {AGE_MAX}")
+    if isinstance(value, str):
+        numbers = AGE_NUMBER.findall(value)
+        if not numbers:
+            raise ValueError("patient_age must state a number of years")
+        if len(numbers) > 1 or NON_YEAR_UNIT.search(value):
+            return None
+        number = numbers[0].replace(",", ".")
+        if "." in number:
+            return None
+        age = int(number)
+        return age if AGE_MIN <= age <= AGE_MAX else None
+    return value
 
 
 def _loose_enum(enum_cls: type[Enum], value: Any) -> Any:
@@ -136,12 +171,7 @@ class Patient(Section):
     @field_validator("patient_age", mode="before")
     @classmethod
     def _age(cls, v):
-        if isinstance(v, bool):
-            raise ValueError("patient_age must be a whole number")
-        if isinstance(v, str):  # "45 years" -> 45; non-numeric text falls through and is rejected
-            digits = "".join(ch for ch in v if ch.isdigit())
-            return int(digits) if digits else v
-        return v
+        return parse_age(v)
 
 
 RISK_DISCLAIMER = (
@@ -246,6 +276,12 @@ class EditProposal(BaseModel):
         return patch
 
 
+class ReviewStatus(str, Enum):
+    needs_review = "needs_review"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class Complaint(ComplaintData):
     """A persisted complaint as exposed by the API."""
 
@@ -254,6 +290,10 @@ class Complaint(ComplaintData):
     id: int
     source: str
     risk_assessment: RiskAssessment | None = None
+    status: ReviewStatus = ReviewStatus.needs_review
+    revision: int = 1
+    evidence: dict[str, dict] = {}
+    reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -261,6 +301,23 @@ class Complaint(ComplaintData):
     @property
     def reference(self) -> str:
         return f"CC-{self.created_at:%Y}-{self.id:04d}"
+
+
+class ReviewRequest(BaseModel):
+    # The revision the reviewer actually looked at; a newer one means someone changed it since.
+    revision: int
+    note: str | None = Field(None, max_length=500)
+
+
+class ComplaintEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    action: str
+    revision: int
+    changed_fields: list[str] | None = None
+    note: str | None = None
+    created_at: datetime
+    actor_id: int | None = None
 
 
 class RouterDecision(BaseModel):
@@ -284,3 +341,4 @@ class CopilotResponse(BaseModel):
     complaint: Complaint
     patch: dict[str, dict] | None = None
     risk_assessment: RiskAssessment | None = None
+    review: dict | None = None  # what a reviewer should look at first
