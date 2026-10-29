@@ -1,6 +1,6 @@
 import re
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +25,8 @@ class Settings(BaseSettings):
 
     # Sessions. SESSION_SECRET must be set in any deployment that runs more than one
     # instance or expects sessions to survive a restart.
+    # "production" refuses to start without a stable session secret and Secure cookies.
+    environment: str = "development"
     session_secret: str = ""
     session_max_age: int = 14 * 24 * 3600
     secure_cookies: bool = False
@@ -32,6 +34,18 @@ class Settings(BaseSettings):
     ai_rate_window: float = 60.0
     session_rate_limit: int = 20
     session_rate_window: float = 3600.0
+
+    @model_validator(mode="after")
+    def _production_must_be_hardened(self):
+        if self.environment == "production":
+            missing = [
+                name
+                for name, ok in (("SESSION_SECRET", bool(self.session_secret)), ("SECURE_COOKIES=true", self.secure_cookies))
+                if not ok
+            ]
+            if missing:
+                raise ValueError(f"ENVIRONMENT=production requires {' and '.join(missing)}")
+        return self
 
     @field_validator("database_url")
     @classmethod

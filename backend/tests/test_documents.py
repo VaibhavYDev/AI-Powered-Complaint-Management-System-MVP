@@ -97,8 +97,31 @@ def test_character_limit_truncates_and_says_so(monkeypatch):
 
 def test_time_limit_stops_parsing(monkeypatch):
     monkeypatch.setattr(settings, "max_pdf_seconds", -1.0)
-    with pytest.raises(DocumentError, match="No text"):
+    with pytest.raises(DocumentError, match="too long"):
         extract_pdf(pdf_bytes(["one", "two"]))
+
+
+def test_a_single_slow_page_cannot_hang_the_request(monkeypatch):
+    """A page that spins inside pypdf must not hold the request open."""
+    import time as clock
+
+    monkeypatch.setattr(settings, "max_pdf_seconds", 0.3)
+    data = pdf_bytes(["fast page", "slow page"])
+
+    original = __import__("pypdf")._page.PageObject.extract_text
+    calls = {"n": 0}
+
+    def maybe_slow(self, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            clock.sleep(10)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(__import__("pypdf")._page.PageObject, "extract_text", maybe_slow)
+    started = clock.monotonic()
+    document = extract_pdf(data)
+    assert clock.monotonic() - started < 5  # abandoned, not awaited
+    assert document.truncated and document.pages == ["fast page"]
 
 
 def test_document_text_is_empty_without_pages():

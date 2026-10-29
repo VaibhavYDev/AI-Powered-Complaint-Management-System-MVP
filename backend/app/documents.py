@@ -1,6 +1,8 @@
 """PDF intake: bounded reads, bounded parsing, and text carrying page references."""
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from io import BytesIO
 
@@ -76,24 +78,41 @@ def extract_pdf(data: bytes) -> Document:
 
 def _read_pages(reader: PdfReader) -> Document:
     """Page, character and wall-clock limits are applied while reading, so a crafted
-    document cannot turn into unbounded work."""
+    document cannot turn into unbounded work.
+
+    Extraction runs on a worker thread because a single pathological page can spin inside
+    pypdf for far longer than the whole request should take. Python cannot kill that thread,
+    so it is abandoned rather than awaited: the request stays bounded and the thread ends on
+    its own. Rate limits and the instance cap bound how many can accumulate.
+    """
     deadline = time.monotonic() + settings.max_pdf_seconds
     document = Document(page_count=len(reader.pages))
     budget = settings.max_document_chars
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pdf-extract")
 
-    for page in reader.pages[: settings.max_pdf_pages]:
-        if time.monotonic() > deadline:
-            document.truncated = True
-            break
-        text = (page.extract_text() or "").strip()
-        if len(text) > budget:
-            text, document.truncated = text[:budget], True
-        budget -= len(text)
-        document.pages.append(text)
-        if budget <= 0:
-            document.truncated = True
-            break
+    try:
+        for page in reader.pages[: settings.max_pdf_pages]:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                document.truncated = True
+                break
+            try:
+                text = (pool.submit(page.extract_text).result(timeout=remaining) or "").strip()
+            except FutureTimeout:
+                document.truncated = True
+                break
+            if len(text) > budget:
+                text, document.truncated = text[:budget], True
+            budget -= len(text)
+            document.pages.append(text)
+            if budget <= 0:
+                document.truncated = True
+                break
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     if document.page_count > len(document.pages):
         document.truncated = True
+    if document.truncated and not any(document.pages):
+        raise DocumentError("The PDF took too long to process.")
     return document

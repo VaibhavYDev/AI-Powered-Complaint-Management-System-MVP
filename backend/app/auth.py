@@ -86,6 +86,23 @@ def current_user(
     return user
 
 
+def optional_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    aivoa_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> User | None:
+    """The principal if there is one. CSRF is still enforced when a session is present."""
+    session = read_session(aivoa_session)
+    if not session:
+        return None
+    user = db.get(User, session["uid"])
+    if user is None:
+        return None
+    if request.method in UNSAFE_METHODS and request.headers.get(CSRF_HEADER) != session["csrf"]:
+        raise HTTPException(403, "Missing or invalid CSRF token.")
+    return user
+
+
 class RateLimiter:
     """Fixed-window limiter held in process memory. With more than one instance the effective
     allowance is per instance; it exists to stop a single visitor hammering the model API."""

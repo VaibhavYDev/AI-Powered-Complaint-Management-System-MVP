@@ -1,16 +1,5 @@
 # AIVOA Complaint Co-pilot
 
-## 🚀 [Live Demo](https://CLOUD_RUN_URL)
-
-**https://CLOUD_RUN_URL** — open it and click "Try a sample complaint".
-No local setup is required to use the hosted demo.
-
-Hosted on Google Cloud Run as a single container (the React build is served by FastAPI, so the UI
-and the `/api` endpoints share one origin) with a Neon PostgreSQL database for persistent complaint
-records. The service scales to zero when idle and starts automatically on the next visit (the first
-request after a quiet period takes a few seconds). `GET /api/health` reports the database status and
-the Groq model in use.
-
 AI-powered Customer Complaint intake for a pharmaceutical Quality Management System (QMS).
 Built for the AIVOA "AI Product Engineer (Interns)" Round 1 assignment.
 
@@ -22,6 +11,17 @@ risk assessment. The form on the left is a live view of that structured state.
 > This is an MVP that demonstrates the workflow. It is not a validated GxP system and makes no
 > claim of regulatory compliance. The risk assessment is an AI-assisted triage aid for a human
 > reviewer, not a regulatory determination.
+
+## Hosted demo
+
+**Not deployed yet.** The container is built and verified, but the target project's billing is not
+active, so no public URL exists. Run it locally in one command (see [Setup](#setup)) or follow
+[DEPLOYMENT.md](DEPLOYMENT.md) to put it on Google Cloud Run with a Neon PostgreSQL database. This
+section will carry the URL once a deployment has been verified end to end — no placeholder link
+stands in for one.
+
+The deployment is a single container: the React build is served by FastAPI, so the UI and the
+`/api` endpoints share one origin and the browser needs no backend configuration.
 
 ## Screenshots
 
@@ -458,7 +458,26 @@ labels it "AI-Assisted Risk Assessment".
 
 ```bash
 cd backend
-.venv\Scripts\python -m pytest -q          # 142 tests; no network, no Postgres, no credentials
+.venv\Scripts\python -m pytest -q          # 179 tests; no network and no credentials needed
+
+PostgreSQL-specific migration tests run when a disposable database is available:
+
+```bash
+docker run -d --name pg -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=test -p 55432:5432 postgres:16-alpine
+TEST_POSTGRES_URL=postgresql+psycopg://test:test@localhost:55432/test .venv\Scripts\python -m pytest -q
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm test          # 13 tests (session/CSRF handling, Redux slice)
+npm run build
+```
+
+Every one of these runs in CI (`.github/workflows/ci.yml`) on each pull request, together with a
+smoke test that builds the image, starts it, and checks that complaint data is closed to
+unauthenticated callers
 .venv\Scripts\python scripts/probe_models.py   # which models this key can use + one JSON-mode call
 .venv\Scripts\python scripts/e2e.py            # real Groq + PostgreSQL run against http://localhost:8000
 ```

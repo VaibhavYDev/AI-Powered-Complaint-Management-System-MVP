@@ -68,5 +68,13 @@ def create_user(db: Session, email: str | None = None, password_hash: str | None
     return user
 
 
+def claim_workspace(db: Session, user: User, email: str, password_hash: str) -> User:
+    """Attach an account to the anonymous workspace already in use, so its complaints survive."""
+    user.email, user.password_hash = email, password_hash
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def user_by_email(db: Session, email: str) -> User | None:
     return db.scalars(select(User).where(User.email == email)).one_or_none()

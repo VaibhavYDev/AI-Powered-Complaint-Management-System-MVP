@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# No secrets are used: the suites run on synthetic data with the network stubbed, so they are
+# safe to run for pull requests from forks.
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Exercises the migrations on the real target dialect, including the foreign key
+      # SQLite cannot express.
+      TEST_POSTGRES_URL: postgresql+psycopg://test:test@localhost:5432/test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - run: python -m pytest -q
+        working-directory: backend
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t aivoa-copilot .
+      - name: Start the container the way the deployment does
+        run: |
+          docker run -d --name copilot -p 8080:8080 \
+            -e PORT=8080 \
+            -e DATABASE_URL=sqlite:////tmp/smoke.db \
+            aivoa-copilot
+      - name: Wait for the service
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS localhost:8080/api/health >/dev/null && exit 0
+            sleep 2
+          done
+          docker logs copilot
+          exit 1
+      - name: The API reports its state and the app is served from the same origin
+        run: |
+          curl -fsS localhost:8080/api/health | tee /dev/stderr | grep -q '"database":"ok"'
+          curl -fsS localhost:8080/ | grep -qi "<title>"
+      - name: Complaint data is closed to unauthenticated callers
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/complaints)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/complaints/1)" = "401"
+      - name: A session is issued and enforced
+        run: |
+          csrf=$(curl -s -c jar -X POST localhost:8080/api/auth/anonymous | sed -E 's/.*"csrf_token":"([^"]+)".*/\1/')
+          test "$(curl -s -b jar -o /dev/null -w '%{http_code}' localhost:8080/api/complaints)" = "200"
+          printf '{"message":"broken tablets"}' > body.json
+          test "$(curl -s -b jar -o /dev/null -w '%{http_code}' -X POST localhost:8080/api/chat \
+            -H 'Content-Type: application/json' --data @body.json)" = "403"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/api/chat \
+            -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' --data @body.json)" = "401"
+      - if: always()
+        run: docker logs copilot

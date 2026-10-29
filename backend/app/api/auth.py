@@ -9,6 +9,7 @@ from ..auth import (
     current_user,
     hash_password,
     issue_session,
+    optional_user,
     session_limiter,
     verify_password,
 )
@@ -53,12 +54,21 @@ def start_anonymous_session(request: Request, response: Response, db: Session = 
 
 @router.post("/register", response_model=Identity)
 def register(
-    body: Credentials, request: Request, response: Response, db: Session = Depends(get_db)
+    body: Credentials,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    existing: User | None = Depends(optional_user),
 ):
     session_limiter.check(client_key(request))
-    if crud.user_by_email(db, body.email.lower()):
+    email = body.email.lower()
+    if crud.user_by_email(db, email):
         raise HTTPException(409, "An account with that email already exists.")
-    user = crud.create_user(db, email=body.email.lower(), password_hash=hash_password(body.password))
+    password_hash = hash_password(body.password)
+    if existing is not None and existing.email is None:
+        user = crud.claim_workspace(db, existing, email, password_hash)
+    else:
+        user = crud.create_user(db, email=email, password_hash=password_hash)
     return identity(user, issue_session(response, user))
 
 

@@ -1,6 +1,7 @@
 """Authentication and owner-scoped authorization."""
 
 from io import BytesIO
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +12,12 @@ from app.schemas import Intent
 from tests.conftest import DRAFT, RISK, sign_in
 
 LOG_RESULT = {"intent": Intent.LOG, "draft": DRAFT, "risk": RISK, "reply": "Logged."}
-CREDENTIALS = {"email": "qa@example.com", "password": "correct horse battery"}
+
+
+@pytest.fixture
+def credentials():
+    """Unique per test: the suite shares one database, so a fixed address would collide."""
+    return {"email": f"qa-{uuid4().hex[:8]}@example.com", "password": "correct horse battery"}
 
 
 def log_complaint(c: TestClient) -> int:
@@ -128,39 +134,39 @@ def test_logout_ends_the_session(client, fake_graph):
     assert client.get("/api/complaints").status_code == 401
 
 
-def test_register_then_login_reaches_the_same_workspace(guest, fake_graph):
+def test_register_then_login_reaches_the_same_workspace(guest, fake_graph, credentials):
     fake_graph(LOG_RESULT)
-    registered = guest.post("/api/auth/register", json=CREDENTIALS).json()
+    registered = guest.post("/api/auth/register", json=credentials).json()
     guest.headers["X-CSRF-Token"] = registered["csrf_token"]
     assert registered["anonymous"] is False
     mine = log_complaint(guest)
     guest.post("/api/auth/logout")
 
     with TestClient(app) as returning:
-        identity = returning.post("/api/auth/login", json=CREDENTIALS).json()
+        identity = returning.post("/api/auth/login", json=credentials).json()
         assert identity["id"] == registered["id"]
         assert [c["id"] for c in returning.get("/api/complaints").json()] == [mine]
 
 
-def test_duplicate_registration_and_bad_passwords_are_refused(guest):
-    guest.post("/api/auth/register", json=CREDENTIALS)
+def test_duplicate_registration_and_bad_passwords_are_refused(guest, credentials):
+    guest.post("/api/auth/register", json=credentials)
     with TestClient(app) as other:
-        assert other.post("/api/auth/register", json=CREDENTIALS).status_code == 409
-        assert other.post("/api/auth/login", json={**CREDENTIALS, "password": "wrong password"}).status_code == 401
+        assert other.post("/api/auth/register", json=credentials).status_code == 409
+        assert other.post("/api/auth/login", json={**credentials, "password": "wrong password"}).status_code == 401
         assert other.post("/api/auth/login", json={"email": "nobody@example.com", "password": "whatever123"}).status_code == 401
         assert other.post("/api/auth/register", json={"email": "a@b.co", "password": "short"}).status_code == 422
         assert other.post("/api/auth/register", json={"email": "not-an-email", "password": "long enough pw"}).status_code == 422
 
 
-def test_passwords_are_hashed_not_stored(guest):
+def test_passwords_are_hashed_not_stored(guest, credentials):
     from app.crud import user_by_email
     from app.db import SessionLocal
 
-    guest.post("/api/auth/register", json=CREDENTIALS)
+    guest.post("/api/auth/register", json=credentials)
     db = SessionLocal()
-    stored = user_by_email(db, CREDENTIALS["email"]).password_hash
+    stored = user_by_email(db, credentials["email"]).password_hash
     db.close()
-    assert CREDENTIALS["password"] not in stored and stored.startswith("$2b$")
+    assert credentials["password"] not in stored and stored.startswith("$2b$")
 
 
 def test_ai_endpoints_are_rate_limited(client, fake_graph, monkeypatch):
@@ -170,3 +176,67 @@ def test_ai_endpoints_are_rate_limited(client, fake_graph, monkeypatch):
     monkeypatch.setattr(ai_limiter, "limit", 3)
     codes = [client.post("/api/chat", json={"message": "broken tablets"}).status_code for _ in range(5)]
     assert codes.count(200) == 3 and codes[-1] == 429
+
+
+# --- production configuration must fail closed --------------------------------------------------
+
+@pytest.mark.parametrize("overrides", [
+    {},
+    {"session_secret": "set-but-insecure-cookies"},
+    {"secure_cookies": True},
+])
+def test_production_refuses_to_start_without_hardening(overrides):
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    with pytest.raises(ValidationError):
+        Settings(environment="production", **overrides)
+
+
+def test_production_starts_when_hardened():
+    from app.config import Settings
+
+    settings = Settings(environment="production", session_secret="a-real-secret", secure_cookies=True)
+    assert settings.environment == "production"
+
+
+def test_development_does_not_require_a_secret():
+    from app.config import Settings
+
+    assert Settings().session_secret == ""
+
+
+# --- claiming an anonymous workspace --------------------------------------------------------------
+
+def test_registering_keeps_the_anonymous_workspace_and_its_records(client, fake_graph, credentials):
+    fake_graph(LOG_RESULT)
+    before = client.get("/api/auth/me").json()
+    mine = log_complaint(client)
+
+    registered = client.post("/api/auth/register", json=credentials).json()
+    assert registered["id"] == before["id"] and registered["anonymous"] is False
+    client.headers["X-CSRF-Token"] = registered["csrf_token"]
+    assert [c["id"] for c in client.get("/api/complaints").json()] == [mine]
+
+    client.post("/api/auth/logout")
+    with TestClient(app) as returning:
+        returning.post("/api/auth/login", json=credentials)
+        assert [c["id"] for c in returning.get("/api/complaints").json()] == [mine]
+
+
+def test_registering_from_an_account_session_starts_a_separate_workspace(client, fake_graph, credentials):
+    fake_graph(LOG_RESULT)
+    first = client.post("/api/auth/register", json=credentials).json()
+    client.headers["X-CSRF-Token"] = first["csrf_token"]
+    log_complaint(client)
+
+    second = client.post("/api/auth/register", json={"email": "other@example.com", "password": "another good pw"}).json()
+    client.headers["X-CSRF-Token"] = second["csrf_token"]
+    assert second["id"] != first["id"]
+    assert client.get("/api/complaints").json() == []
+
+
+def test_registering_needs_the_csrf_token_when_a_session_exists(client, credentials):
+    client.headers.pop("X-CSRF-Token")
+    assert client.post("/api/auth/register", json=credentials).status_code == 403
