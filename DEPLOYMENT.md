@@ -42,7 +42,7 @@ gcloud run deploy aivoa-complaint-copilot \
   --allow-unauthenticated \
   --min-instances 0 --max-instances 3 \
   --memory 512Mi --cpu 1 --concurrency 20 --timeout 120 \
-  --set-env-vars GROQ_MODEL=gemma2-9b-it,GROQ_FALLBACK_MODEL=openai/gpt-oss-20b,GROQ_REASONING_EFFORT=low \
+  --set-env-vars GROQ_MODEL=gemma2-9b-it,GROQ_FALLBACK_MODEL=openai/gpt-oss-20b,GROQ_REASONING_EFFORT=low   --set-env-vars SECURE_COOKIES=true   --set-env-vars SESSION_SECRET=<python -c "import secrets; print(secrets.token_urlsafe(32))"> \
   --set-env-vars GROQ_API_KEY=<your Groq key> \
   --set-env-vars DATABASE_URL=<Neon connection string>
 ```
@@ -80,6 +80,11 @@ curl https://<service-url>/api/health
 # {"database":"ok","groq_configured":true,"configured_model":"gemma2-9b-it",
 #  "active_model":"openai/gpt-oss-20b","fallback_reason":"..."}
 ```
+
+`SESSION_SECRET` must be set and kept stable: sessions are signed with it, so changing it
+signs every visitor out, and leaving it unset gives each instance its own ephemeral secret.
+Schema changes are applied by alembic at startup (`app/migrate.py`); the application no longer
+creates tables implicitly. Take a Neon branch/backup before deploying a migration.
 
 Then open the URL in a browser and run the demo flow (LOG → EDIT → PDF EXTRACT); records are
 readable via `GET /api/complaints/{id}` after a redeploy because they live in Neon, not in the

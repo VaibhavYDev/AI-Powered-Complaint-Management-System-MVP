@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     max_pdf_pages: int = 50
     max_pdf_seconds: float = 15.0
 
+    # Sessions. SESSION_SECRET must be set in any deployment that runs more than one
+    # instance or expects sessions to survive a restart.
+    session_secret: str = ""
+    session_max_age: int = 14 * 24 * 3600
+    secure_cookies: bool = False
+    ai_rate_limit: int = 30
+    ai_rate_window: float = 60.0
+    session_rate_limit: int = 20
+    session_rate_window: float = 3600.0
+
     @field_validator("database_url")
     @classmethod
     def _psycopg_driver(cls, url: str) -> str:

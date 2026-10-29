@@ -11,9 +11,11 @@ from sqlalchemy.exc import OperationalError
 
 from .ai.llm import AIConfigError, AIOutputError, AIProviderError, model_status, resolve_model
 from .ai.nodes import NoComplaintToEdit, NothingExtracted
+from .api.auth import router as auth_router
 from .api.complaints import router
 from .config import settings
-from .db import Base, engine
+from .db import engine
+from .migrate import upgrade_to_head
 from .documents import DocumentError
 from . import models  # noqa: F401  (registers the table on Base)
 
@@ -22,7 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(engine)
+    upgrade_to_head()
     resolve_model()
     yield
 
@@ -34,6 +36,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_router)
 app.include_router(router)
 
 # Expected failures map to HTTP errors here so the endpoints stay free of try/except.
