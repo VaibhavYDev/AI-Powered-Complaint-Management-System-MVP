@@ -22,11 +22,31 @@ export const uploadDocument = createAsyncThunk("copilot/upload", async (file, { 
   }
 });
 
+export const decide = createAsyncThunk(
+  "copilot/decide",
+  async ({ action, acknowledge, note }, { getState, rejectWithValue }) => {
+    const { complaint } = getState().copilot;
+    try {
+      const updated =
+        action === "approve"
+          ? await api.approve(complaint.id, complaint.revision, acknowledge, note)
+          : await api.reject(complaint.id, complaint.revision, note);
+      return { complaint: updated, events: await api.history(complaint.id) };
+    } catch (err) {
+      return rejectWithValue(err.message);
+    }
+  },
+);
+
+export const loadHistory = createAsyncThunk("copilot/history", async (id) => api.history(id));
+
 const initialState = {
   complaint: null, // the persisted record as returned by the API; single source of truth for the form
   patch: null, // fields changed by the last EDIT, used to highlight them
   messages: [WELCOME],
-  busy: null, // "sending" | "uploading" | null
+  events: [],
+  review: null, // what a reviewer should look at first, from the last AI operation
+  busy: null, // "sending" | "uploading" | "reviewing" | null
 };
 
 const copilot = createSlice({
@@ -40,6 +60,8 @@ const copilot = createSlice({
       state.busy = null;
       state.complaint = payload.complaint;
       state.patch = payload.patch;
+      state.review = payload.review ?? null;
+      state.events = [];
       state.messages.push({ role: "assistant", text: payload.message, intent: payload.intent });
       if (payload.risk_assessment) state.messages.push({ role: "risk", risk: payload.risk_assessment });
     };
@@ -59,7 +81,19 @@ const copilot = createSlice({
       .addCase(sendMessage.fulfilled, settled)
       .addCase(uploadDocument.fulfilled, settled)
       .addCase(sendMessage.rejected, failed)
-      .addCase(uploadDocument.rejected, failed);
+      .addCase(uploadDocument.rejected, failed)
+      .addCase(decide.pending, (state) => {
+        state.busy = "reviewing";
+      })
+      .addCase(decide.fulfilled, (state, { payload }) => {
+        state.busy = null;
+        state.complaint = payload.complaint;
+        state.events = payload.events;
+      })
+      .addCase(decide.rejected, failed)
+      .addCase(loadHistory.fulfilled, (state, { payload }) => {
+        state.events = payload;
+      });
   },
 });
 

@@ -57,7 +57,19 @@ def approve(
     _require_revision(record, body.revision)
     if record.status == ReviewStatus.approved:
         raise HTTPException(409, "This complaint is already approved.")
-    return crud.review(db, record, ReviewStatus.approved.value, actor_id=user.id, note=body.note)
+
+    unsupported = sorted(p for p, e in (record.evidence or {}).items() if e.get("status") == "unsupported")
+    if unsupported and not body.acknowledge_unsupported:
+        raise HTTPException(
+            422,
+            "These values are not supported by the source and must be acknowledged before approval: "
+            + ", ".join(unsupported),
+        )
+
+    approved = crud.review(
+        db, complaint_id, user.id, body.revision, ReviewStatus.approved.value, actor_id=user.id, note=body.note
+    )
+    return _require_applied(approved, record)
 
 
 @router.post("/complaints/{complaint_id}/reject", response_model=Complaint)
@@ -69,7 +81,10 @@ def reject(
 ):
     record = _load(db, complaint_id, user)
     _require_revision(record, body.revision)
-    return crud.review(db, record, ReviewStatus.rejected.value, actor_id=user.id, note=body.note)
+    rejected = crud.review(
+        db, complaint_id, user.id, body.revision, ReviewStatus.rejected.value, actor_id=user.id, note=body.note
+    )
+    return _require_applied(rejected, record)
 
 
 @router.get("/complaints/{complaint_id}/history", response_model=list[ComplaintEventOut])
@@ -100,6 +115,13 @@ def _require_revision(record: ComplaintRecord, revision: int) -> None:
         raise HTTPException(
             409, f"This complaint has changed since you looked at it (revision {record.revision})."
         )
+
+
+def _require_applied(updated: ComplaintRecord | None, seen: ComplaintRecord) -> ComplaintRecord:
+    """The conditional update matched no row, so another reviewer got there first."""
+    if updated is None:
+        raise HTTPException(409, "This complaint changed while you were reviewing it.")
+    return updated
 
 
 def _persist(

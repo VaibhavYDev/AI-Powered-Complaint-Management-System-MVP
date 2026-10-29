@@ -307,6 +307,8 @@ class ReviewRequest(BaseModel):
     # The revision the reviewer actually looked at; a newer one means someone changed it since.
     revision: int
     note: str | None = Field(None, max_length=500)
+    # Approving a record that still contains values absent from the source has to be deliberate.
+    acknowledge_unsupported: bool = False
 
 
 class ComplaintEventOut(BaseModel):
