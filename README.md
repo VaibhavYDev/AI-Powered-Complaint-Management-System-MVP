@@ -14,14 +14,16 @@ risk assessment. The form on the left is a live view of that structured state.
 
 ## Hosted demo
 
-**Not deployed yet.** The container is built and verified, but the target project's billing is not
-active, so no public URL exists. Run it locally in one command (see [Setup](#setup)) or follow
-[DEPLOYMENT.md](DEPLOYMENT.md) to put it on Google Cloud Run with a Neon PostgreSQL database. This
-section will carry the URL once a deployment has been verified end to end — no placeholder link
-stands in for one.
+**https://aivoa-complaint-copilot.onrender.com** — Render free plan, so the service sleeps after
+15 minutes of inactivity and the first visit takes about a minute to wake. It is not always-on.
 
 The deployment is a single container: the React build is served by FastAPI, so the UI and the
-`/api` endpoints share one origin and the browser needs no backend configuration.
+`/api` endpoints share one origin and the browser needs no backend configuration. `render.yaml`
+is the blueprint; `GET /api/health` reports database, schema and model state, and `/api/ready`
+returns 503 until the service can actually serve.
+
+If the link is unresponsive the service needs a sync in the Render dashboard — see
+[DEPLOYMENT.md](DEPLOYMENT.md#restoring-the-render-service).
 
 ## Screenshots
 
