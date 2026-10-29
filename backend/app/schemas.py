@@ -276,6 +276,12 @@ class EditProposal(BaseModel):
         return patch
 
 
+class ReviewStatus(str, Enum):
+    needs_review = "needs_review"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class Complaint(ComplaintData):
     """A persisted complaint as exposed by the API."""
 
@@ -284,6 +290,10 @@ class Complaint(ComplaintData):
     id: int
     source: str
     risk_assessment: RiskAssessment | None = None
+    status: ReviewStatus = ReviewStatus.needs_review
+    revision: int = 1
+    evidence: dict[str, dict] = {}
+    reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -291,6 +301,23 @@ class Complaint(ComplaintData):
     @property
     def reference(self) -> str:
         return f"CC-{self.created_at:%Y}-{self.id:04d}"
+
+
+class ReviewRequest(BaseModel):
+    # The revision the reviewer actually looked at; a newer one means someone changed it since.
+    revision: int
+    note: str | None = Field(None, max_length=500)
+
+
+class ComplaintEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    action: str
+    revision: int
+    changed_fields: list[str] | None = None
+    note: str | None = None
+    created_at: datetime
+    actor_id: int | None = None
 
 
 class RouterDecision(BaseModel):
@@ -314,3 +341,4 @@ class CopilotResponse(BaseModel):
     complaint: Complaint
     patch: dict[str, dict] | None = None
     risk_assessment: RiskAssessment | None = None
+    review: dict | None = None  # what a reviewer should look at first
