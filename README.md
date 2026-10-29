@@ -1,13 +1,15 @@
 # AIVOA Complaint Co-pilot
 
-## 🚀 [Live Demo](https://aivoa-complaint-copilot.onrender.com)
+## 🚀 [Live Demo](https://CLOUD_RUN_URL)
 
-**https://aivoa-complaint-copilot.onrender.com** — open it and click "Try a sample complaint".
+**https://CLOUD_RUN_URL** — open it and click "Try a sample complaint".
 No local setup is required to use the hosted demo.
 
-Hosted on Render as one always-on Docker web service (the React build is served by FastAPI, so the
-UI and the `/api` endpoints share a single origin) with a managed Render PostgreSQL database for
-persistent complaint records. `GET /api/health` reports the database status and the Groq model in use.
+Hosted on Google Cloud Run as a single container (the React build is served by FastAPI, so the UI
+and the `/api` endpoints share one origin) with a Neon PostgreSQL database for persistent complaint
+records. The service scales to zero when idle and starts automatically on the next visit (the first
+request after a quiet period takes a few seconds). `GET /api/health` reports the database status and
+the Groq model in use.
 
 AI-powered Customer Complaint intake for a pharmaceutical Quality Management System (QMS).
 Built for the AIVOA "AI Product Engineer (Interns)" Round 1 assignment.
@@ -250,7 +252,7 @@ frontend/
 samples/               fictional demo complaint PDFs + generator
 screenshots/           captures of the running app (used above)
 docker-compose.yml     PostgreSQL 16 for local development
-Dockerfile · render.yaml   single-container build (frontend served by FastAPI) + Render blueprint (web service + PostgreSQL)
+Dockerfile · cloudbuild.yaml · DEPLOYMENT.md   single-container build (frontend served by FastAPI) and the Cloud Run + Neon deployment
 DEMO_SCRIPT.md · CODE_WALKTHROUGH.md · SUBMISSION_CHECKLIST.md
 ```
 
@@ -304,10 +306,10 @@ frontend configuration is needed; for a production build set `VITE_API_URL` to t
 
 ### Hosted deployment (what the live demo runs)
 
-`render.yaml` is a Render Blueprint: one always-on Docker web service plus a Render PostgreSQL
-database, with `DATABASE_URL` injected by Render and `GROQ_API_KEY` entered once in the dashboard.
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/VaibhavYDev/AI-Powered-Complaint-Management-System-MVP)
+Google Cloud Run + Neon PostgreSQL, built from the repository `Dockerfile`. The exact commands,
+cost-safety settings (request-based billing, `min-instances 0`, `max-instances 3`, budget alert)
+and verification steps are in [DEPLOYMENT.md](DEPLOYMENT.md); `cloudbuild.yaml` wires a GitHub →
+Cloud Build → Cloud Run pipeline.
 
 The same image runs anywhere:
 
@@ -318,7 +320,7 @@ docker run -p 8000:8000 -e GROQ_API_KEY=... -e DATABASE_URL=postgresql://user:pa
 
 The image builds the React app and FastAPI serves it from `/`, so one URL is the whole product.
 `postgres://` / `postgresql://` URLs from hosting providers are accepted as-is (the psycopg driver
-is selected automatically).
+is selected automatically) and SSL parameters such as `?sslmode=require` are preserved.
 
 ## API
 
