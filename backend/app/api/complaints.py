@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from .. import crud
 from ..ai.graph import run_copilot
 from ..db import get_db
-from ..documents import extract_pdf_text
+from ..documents import extract_pdf, read_upload
 from ..models import ComplaintRecord
 from ..schemas import ChatRequest, Complaint, CopilotResponse, Intent
 
@@ -22,8 +22,8 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
 def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(415, "Only PDF files are supported.")
-    text = extract_pdf_text(file.file.read())
-    result = run_copilot(text, source="document")
+    document = extract_pdf(read_upload(file.file))
+    result = run_copilot(document.text, source="document")
     return _persist(db, result, None, source="document")
 
 

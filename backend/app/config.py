@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
     max_upload_bytes: int = 10 * 1024 * 1024
     max_document_chars: int = 12_000
+    max_pdf_pages: int = 50
+    max_pdf_seconds: float = 15.0
 
     @field_validator("database_url")
     @classmethod
