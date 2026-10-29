@@ -5,6 +5,7 @@ columns and the frontend form. Every fact field is optional: the AI must leave
 anything not stated in the source as null rather than guess.
 """
 
+import re
 from datetime import date, datetime
 from enum import Enum
 from typing import Any
@@ -52,6 +53,40 @@ class Intent(str, Enum):
 
 
 NULL_WORDS = {"", "null", "none", "n/a", "na", "unknown", "not stated", "not specified", "not provided", "not mentioned"}
+
+
+AGE_MIN, AGE_MAX = 0, 120
+AGE_NUMBER = re.compile(r"-?\d+(?:[.,]\d+)?")
+NON_YEAR_UNIT = re.compile(r"\b(month|week|day|hour)s?\b", re.IGNORECASE)
+
+
+def parse_age(value: Any) -> Any:
+    """An exact age in whole years, or nothing.
+
+    A source the reader cannot pin down — a range, a date, several numbers, another unit,
+    a fraction — yields None instead of an invented number. A malformed value (text, a
+    boolean, an out-of-range number) is rejected so the model is asked to correct it.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("patient_age must be a whole number of years")
+    if isinstance(value, (int, float)):
+        if float(value).is_integer() and AGE_MIN <= value <= AGE_MAX:
+            return int(value)
+        raise ValueError(f"patient_age must be a whole number between {AGE_MIN} and {AGE_MAX}")
+    if isinstance(value, str):
+        numbers = AGE_NUMBER.findall(value)
+        if not numbers:
+            raise ValueError("patient_age must state a number of years")
+        if len(numbers) > 1 or NON_YEAR_UNIT.search(value):
+            return None
+        number = numbers[0].replace(",", ".")
+        if "." in number:
+            return None
+        age = int(number)
+        return age if AGE_MIN <= age <= AGE_MAX else None
+    return value
 
 
 def _loose_enum(enum_cls: type[Enum], value: Any) -> Any:
@@ -136,12 +171,7 @@ class Patient(Section):
     @field_validator("patient_age", mode="before")
     @classmethod
     def _age(cls, v):
-        if isinstance(v, bool):
-            raise ValueError("patient_age must be a whole number")
-        if isinstance(v, str):  # "45 years" -> 45; non-numeric text falls through and is rejected
-            digits = "".join(ch for ch in v if ch.isdigit())
-            return int(digits) if digits else v
-        return v
+        return parse_age(v)
 
 
 RISK_DISCLAIMER = (

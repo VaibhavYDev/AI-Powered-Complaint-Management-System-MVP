@@ -32,9 +32,13 @@ class NothingExtracted(Exception):
 
 
 def route(state: GraphState) -> GraphState:
-    text = f"[Uploaded document]\n{state['text']}" if state["source"] == "document" else state["text"]
-    decision = structured(RouterDecision, prompts.router_prompt(bool(state.get("existing")), state["source"]), text)
-    log.info("Routed %s input as %s", state["source"], decision.intent.value)
+    # An uploaded document already establishes the operation, so it is routed without a
+    # model call; only free-form chat needs the classifier.
+    if state["source"] == "document":
+        log.info("Routed document input as EXTRACT")
+        return {"intent": Intent.EXTRACT}
+    decision = structured(RouterDecision, prompts.router_prompt(bool(state.get("existing")), "chat"), state["text"])
+    log.info("Routed chat input as %s", decision.intent.value)
     return {"intent": decision.intent}
 
 

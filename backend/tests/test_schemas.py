@@ -64,3 +64,44 @@ def test_risk_assessment_rejects_invalid(bad):
 def test_unparseable_date_is_rejected():
     with pytest.raises(ValidationError):
         ComplaintData.model_validate({"product": {"expiry_date": "next year"}})
+
+
+# --- patient age: an exact age or nothing, never an invented number -------------------------
+
+@pytest.mark.parametrize("value, expected", [
+    (45, 45),
+    (45.0, 45),
+    ("45", 45),
+    ("45 years", 45),
+    ("45 year old", 45),
+    (" 45y ", 45),
+    ("age 45", 45),
+    ("45-year-old male", 45),
+    (0, 0),
+    (120, 120),
+])
+def test_unambiguous_ages_are_accepted(value, expected):
+    assert ComplaintData.model_validate({"patient": {"patient_age": value}}).patient.patient_age == expected
+
+
+@pytest.mark.parametrize("value", [
+    "5 to 10 years",      # regression: digit concatenation produced 510
+    "5-10 years",
+    "between 30 and 40",
+    "30 or 40",
+    "1980-05-01",         # date of birth, not an age
+    "01/02/1990",
+    "born in 1990",       # single number, but not a plausible age
+    "-5",
+    "2.5 years",          # fractional age cannot be stored as whole years
+    "6 months",           # a different unit must not become 6 years
+    "3 weeks",
+])
+def test_ambiguous_ages_become_null_not_invented(value):
+    assert ComplaintData.model_validate({"patient": {"patient_age": value}}).patient.patient_age is None
+
+
+@pytest.mark.parametrize("value", ["forty-two", True, 42.5, -5, 999, 121])
+def test_malformed_ages_are_rejected(value):
+    with pytest.raises(ValidationError):
+        ComplaintData.model_validate({"patient": {"patient_age": value}})
