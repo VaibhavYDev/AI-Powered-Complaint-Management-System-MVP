@@ -90,7 +90,9 @@ Responsibilities, one place each:
 | Graph nodes: route / log / edit / extract / assess_risk | `backend/app/ai/nodes.py` |
 | Graph wiring | `backend/app/ai/graph.py` |
 | EDIT patch semantics (what may change, what never can) | `backend/app/merge.py` |
-| Persistence | `backend/app/crud.py`, `backend/app/models.py` |
+| Session identity, CSRF, rate limits | `backend/app/auth.py` |
+| Owner-scoped persistence | `backend/app/crud.py`, `backend/app/models.py` |
+| Schema migrations | `backend/alembic/versions/` |
 | HTTP endpoints + error mapping | `backend/app/api/complaints.py`, `backend/app/main.py` |
 
 ### LangGraph workflow
@@ -404,6 +406,28 @@ curl -X POST http://localhost:8000/api/upload -F "file=@samples/complaint_02_adv
 
 Responses always carry a human-readable `detail`; stack traces are never returned.
 
+## Security model
+
+- **Identity**: a signed, HttpOnly session cookie (`SameSite=Lax`, `Secure` when
+  `SECURE_COOKIES=true`). A visitor is given an anonymous workspace automatically, so the demo
+  needs no sign-up; `POST /api/auth/register` and `/login` attach an email and password (bcrypt)
+  to a workspace so it can be reached again.
+- **Authorization**: every complaint has an `owner_id`, and every read and write filters on it
+  inside the query. Another workspace's record returns `404`, so ids cannot be probed. The owner
+  comes from the session cookie and never from the request body.
+- **CSRF**: state-changing requests must echo the session's CSRF token in `X-CSRF-Token`; the
+  token alone is useless without the cookie.
+- **Rate limits**: the model-backed endpoints and session creation are limited per principal and
+  per client address. The limiter is in process memory, so with several instances the effective
+  allowance is per instance.
+- **Schema**: alembic owns the schema (`app/migrate.py` runs `upgrade head` at startup); the
+  application no longer calls `create_all()`. Ownership was added additively, so rows written
+  before it keep their data and belong to nobody rather than being assigned to an account.
+
+Not implemented, and not claimed: separation of duties between author and reviewer, audit
+trails, tenant-level encryption, or any GDPR/GxP compliance position. Hosting region and data
+residency are whatever the deployment target provides and have not been assessed.
+
 ## Data model
 
 One canonical schema (`schemas.py`) is used everywhere:
@@ -434,12 +458,13 @@ labels it "AI-Assisted Risk Assessment".
 
 ```bash
 cd backend
-.venv\Scripts\python -m pytest -q          # 67 unit/API tests, no network or Postgres needed
+.venv\Scripts\python -m pytest -q          # 142 tests; no network, no Postgres, no credentials
 .venv\Scripts\python scripts/probe_models.py   # which models this key can use + one JSON-mode call
 .venv\Scripts\python scripts/e2e.py            # real Groq + PostgreSQL run against http://localhost:8000
 ```
 
-`tests/` cover schema normalisation/rejection, EDIT patch safety (single/nested/multiple fields,
+`tests/` cover authentication and cross-workspace isolation, migrations, PDF limits,
+schema normalisation/rejection, EDIT patch safety (single/nested/multiple fields,
 nulls never erase data, explicit clear only), PDF validation and the HTTP contract (SQLite with a
 stubbed graph). `scripts/e2e.py` runs LOG → EDIT → nested EDIT → EXTRACT plus the error paths
 against the live stack and asserts that unrelated fields are untouched by edits.
