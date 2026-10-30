@@ -21,6 +21,8 @@ States: NOT STARTED · IN PROGRESS · VERIFIED · BLOCKED (EXTERNAL) · FAILED
 - Frontend **17 unit tests** and **3 browser end-to-end tests**.
 - The browser suite passes against the stub provider *and* against the real Groq API.
 - The CI smoke job was replayed locally against a real container, step for step: `SMOKE OK`.
+- The CI e2e job was replayed on Linux from a clean `git archive` checkout: `3 passed`. It found
+  a harness bug that could not reproduce on Windows (below), so the first two replays failed.
 
 ## Decisions worth stating
 
@@ -36,6 +38,14 @@ answers Groq's wire protocol; `GROQ_BASE_URL` and `GROQ_API_BASE` point the real
 Nothing in the application is modified, mocked or made test-aware, so routing, validation,
 evidence, persistence, auth and the interface are genuinely exercised. `E2E_REAL=1` runs the
 identical suite against Groq, and that run produces the committed screenshots.
+
+**Run the browser tests on the platform CI uses.** The Playwright config clears the
+end-to-end database so each run starts empty, and it is also re-evaluated inside every worker,
+by which time the API holds that file open. On Windows the delete fails and the failure was
+swallowed. On Linux unlinking an open file succeeds, so a worker pulled the database out from
+under the running server: `select 1` kept working, `/api/health` kept reporting `database: ok`,
+and every query that needed a table failed, so the session endpoint answered 503 to everything.
+All three tests failed on Linux for a reason the machine they were written on could not produce.
 
 ## Defects found by real runs rather than by tests
 
