@@ -20,15 +20,15 @@ const stubbedProvider = {
   GROQ_API_BASE: `http://127.0.0.1:${STUB_PORT}`,
 };
 
-// Every run starts from an empty database. This file is re-evaluated inside each worker, by
-// which time the API holds the database open; only the first evaluation, before the server is
-// started, can clear it - and that is the only point at which clearing it is correct.
+// Every run starts from an empty database, cleared once by the process that owns the servers.
+// This file is re-evaluated inside every worker as well, and by then the API has the database
+// open: on Windows the delete fails harmlessly, but on Linux unlinking an open file succeeds,
+// which pulls the database out from under the running server. `select 1` keeps working, so the
+// health check still reports ok while every query that needs a table fails - the whole suite
+// then dies on 503s from the session endpoint. Playwright sets TEST_WORKER_INDEX in workers,
+// so its absence is what identifies the one process allowed to clear it.
 const db = join(tmpdir(), "aivoa-e2e.db");
-try {
-  rmSync(db, { force: true });
-} catch {
-  // Already owned by the server this run started.
-}
+if (process.env.TEST_WORKER_INDEX === undefined) rmSync(db, { force: true });
 
 export default defineConfig({
   testDir: "./e2e",

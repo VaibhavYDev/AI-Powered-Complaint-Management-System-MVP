@@ -302,6 +302,9 @@ cd frontend && npm test                              # 17 passed
 cd frontend && npm run e2e                           # builds, then 3 browser tests
 ```
 
+The browser suite starts the API itself and needs a Python on `PATH`; if yours lives in a
+virtualenv, point `E2E_PYTHON` at it (`.venv\Scripts\python.exe` on Windows).
+
 CI (`.github/workflows/ci.yml`) runs four jobs on every pull request: `backend` (against a real
 PostgreSQL 16 service), `frontend`, `e2e`, and `smoke`, which builds the Docker image, starts it
 the way the deployment does, and asserts that complaint and care data are closed to
