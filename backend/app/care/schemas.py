@@ -7,7 +7,7 @@ Nothing here makes a clinical judgement: the output is documentation to be revie
 from datetime import date
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Category(str, Enum):
@@ -65,14 +65,6 @@ class CareNote(BaseModel):
         description="anything ambiguous or missing that a person should resolve; abstain here rather than guessing",
     )
 
-    @model_validator(mode="after")
-    def _residents_include_those_observed(self):
-        named = {r for r in self.residents if r}
-        for observation in self.observations:
-            if observation.resident and observation.resident not in named:
-                self.residents.append(observation.resident)
-                named.add(observation.resident)
-        return self
 
 
 class CarePlanEntry(BaseModel):

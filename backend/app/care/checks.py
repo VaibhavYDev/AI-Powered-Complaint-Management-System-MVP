@@ -18,6 +18,13 @@ NEGATORS = re.compile(r"\b(no|denies|without|kein|keine|ohne|nicht)\b", re.IGNOR
 # Notes and care plans disagree about honorifics, so names are compared without them.
 # A negator only applies inside its own sentence.
 SENTENCE_END = re.compile(r"[.!?;]")
+# Text in a note that addresses the reader rather than describing care.
+INSTRUCTION = re.compile(
+    r"(ignore (all )?previous|disregard (the )?(above|previous)|system\s*:|achtung\s+system|"
+    r"assistant\s*:|you must (now )?|instead record|also record|record that|trage .{0,40}ein|"
+    r"note to the reader|\[\[)",
+    re.IGNORECASE,
+)
 HONORIFICS = re.compile(r"^(frau|herr|mr|mrs|ms|miss|dr|prof)\.?\s+", re.IGNORECASE)
 
 
@@ -51,6 +58,7 @@ def analyse(note: CareNote, source: str, care_plan: list[CarePlanEntry] | None =
     evidence = verify_values(values, source, judgements)
 
     alerts: list[Alert] = []
+    alerts += _injected_instructions(note, source, evidence)
     alerts += _unsupported_findings(note, evidence)
     alerts += _resident_attribution(note, source, evidence)
     alerts += _negated_findings(note, evidence, source)
@@ -58,6 +66,59 @@ def analyse(note: CareNote, source: str, care_plan: list[CarePlanEntry] | None =
     alerts += _care_plan_gaps(note, care_plan or [])
     alerts += _open_questions(note)
     return evidence, alerts
+
+
+def injected_spans(source: str) -> list[tuple[int, int]]:
+    """Stretches of the note that address the reader instead of describing a resident.
+
+    A benchmark run showed the model obeying instructions embedded in a note. Quoting such text
+    makes it look well evidenced - the characters really are in the source - so the spans are
+    located directly and anything drawn from them is raised for review.
+    """
+    spans = []
+    for match in INSTRUCTION.finditer(source):
+        start = match.start()
+        end = source.find("\n", start)
+        spans.append((start, len(source) if end == -1 else end))
+    return spans
+
+
+def _in_span(offset: int | None, spans: list[tuple[int, int]]) -> bool:
+    return offset is not None and any(start <= offset < end for start, end in spans)
+
+
+def _injected_instructions(note: CareNote, source: str, evidence: dict) -> list[Alert]:
+    spans = injected_spans(source)
+    if not spans:
+        return []
+
+    alerts = [
+        Alert(
+            kind="source_contains_instructions",
+            severity="high",
+            message=(
+                "The note contains text addressed to the reader rather than describing a resident. "
+                "Treat anything taken from it as unverified."
+            ),
+        )
+    ]
+    for index in range(len(note.observations)):
+        for part in ("finding", "resident"):
+            if _in_span(evidence.get(f"observations.{index}.{part}", {}).get("offset"), spans):
+                alerts.append(
+                    Alert(
+                        kind="finding_from_injected_text",
+                        severity="high",
+                        message=(
+                            f"This observation's {part} was taken from instruction-like text in the note, "
+                            "not from a record of care."
+                        ),
+                        observation_index=index,
+                        evidence_path=f"observations.{index}.{part}",
+                    )
+                )
+                break
+    return alerts
 
 
 def _unsupported_findings(note: CareNote, evidence: dict) -> list[Alert]:

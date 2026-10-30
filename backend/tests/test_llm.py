@@ -178,7 +178,7 @@ class FakeChatGroq:
         assert (schema is not None and strict is True) if method == "json_schema" else (schema is None and strict is None)
         return self
 
-    def invoke(self, messages):
+    def invoke(self, messages, config=None):
         FakeChatGroq.invoked.append((self.model, len(messages)))
         outcome = FakeChatGroq.behaviour[self.model].pop(0)
         if isinstance(outcome, Exception):

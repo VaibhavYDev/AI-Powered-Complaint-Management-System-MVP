@@ -9,8 +9,8 @@ States: NOT STARTED · IN PROGRESS · VERIFIED · BLOCKED (EXTERNAL) · FAILED
 | 1 Security & correctness | VERIFIED | Merged in PR #1; 211 backend tests green on `main` (CI run on `d68afdd` succeeded) |
 | 2 Evidence & human review | VERIFIED | Backend + reviewer UI work together; full workflow exercised in a browser (extract -> flagged unsupported value -> acknowledge -> approve -> export -> edit revokes approval at revision 2) |
 | 3 Care Documentation Reliability Lab | VERIFIED | Backend, checks and UI; verified in a browser with the real model on a synthetic German and English note: 3 observations attributed to 2 residents, the wound-versus-care-plan gap raised, approve and mock export |
-| 4 Real-model evaluation | NOT STARTED | |
-| 5 Provider reliability & observability | NOT STARTED | |
+| 4 Real-model evaluation | VERIFIED | 43-case benchmark run three times against `openai/gpt-oss-20b`; results in `EVALUATION.md` and `backend/eval/results/`; two real defects found and fixed |
+| 5 Provider reliability & observability | IN PROGRESS | Privacy-safe telemetry (calls, retries, tokens, latency, error class) added and used by the benchmark; provider abstraction outstanding |
 | 6 QA & CI | IN PROGRESS | CI green on `main`; browser E2E outstanding |
 | 7 README presentation | IN PROGRESS | Live-demo section honest; screenshots predate the review UI |
 | 8 Integration & deployment | BLOCKED (EXTERNAL) | PR #1 and #3 merged; PR #2 superseded; deployment blocked |
@@ -53,18 +53,21 @@ from here.
 
 Branch `feat/review-ui-and-care-lab`, based on `main` (`d68afdd`).
 
-Phases 2 and 3 are complete and verified in a browser against the real model
-(`openai/gpt-oss-20b`).
+Phases 2, 3 and 4 are complete and verified. Phase 5 is part done.
 
-Two defects found by real runs rather than by tests, both fixed with regression tests:
-- resident names were compared with honorifics attached, so a note saying "Frau Anna Keller"
-  did not match a care plan saying "Anna Keller" and produced false documentation gaps;
-- the negation check read backwards past the end of a sentence, so "No pain reported." for one
-  resident flagged the next resident's mobility entry.
+Real defects found by real runs rather than by tests, each fixed with a regression test:
+- resident names compared with honorifics attached, producing false care-plan gaps;
+- the negation check reading backwards past a sentence end, so one resident's "No pain
+  reported." flagged the next resident's entry;
+- the extraction schema absorbing any resident an observation claimed into the note's roster,
+  which defeated the "resident not in the note" check;
+- injected instructions inside a note being rated `verbatim` by the lexical evidence check,
+  because the injected sentence really is in the source. Instruction spans are now located
+  directly and anything drawn from them is raised as a high-priority alert. Containment has
+  been 4/4 on the adversarial cases in every run since.
 
 Next, in order:
-1. Phase 4 benchmark and real-model evaluation. A working Groq key is in `backend/.env`; the
-   model actually served is `openai/gpt-oss-20b` because `gemma2-9b-it` is retired.
-2. Phase 5 provider reliability and telemetry.
-3. Phase 6 remaining QA, Phase 7 README.
-4. Phase 8 deployment, once the Render sync below is done.
+1. Finish Phase 5: minimal provider abstraction and backoff with jitter.
+2. Phase 6: browser end-to-end coverage in CI.
+3. Phase 7: README rewrite with the measured results and fresh screenshots.
+4. Phase 8: deployment, once the Render sync below is done.
