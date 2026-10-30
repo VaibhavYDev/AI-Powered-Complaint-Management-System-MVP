@@ -18,10 +18,9 @@ where it matters.
       and none of them are tracked (109 tracked files, all intentional)
 - [x] Demo PDFs committed (`samples/complaint_01..03*.pdf`) with the generator that made them
 - [x] No resume, database file or personal document committed
-- [ ] **Live demo** — the Render service has no healthy instance. Both code-side causes are
-      fixed and verified; a manual dashboard sync is outstanding. See
-      [DEPLOYMENT.md](DEPLOYMENT.md#restoring-the-render-service). The README lists the demo as
-      broken rather than linking it as though it worked.
+- [x] **Live demo** — <https://ai-powered-complaint-management-system-ky8u.onrender.com> answers
+      `/api/health` with `status: ready`, `database: ok`, `schema: ready`, and `/api/ready` 200.
+      See [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Verification
 

@@ -51,13 +51,11 @@ docker build -t aivoa-copilot . && docker run -p 8000:8000 -e GROQ_API_KEY=sk-..
 Then open <http://localhost:8000>. One image contains the built React app and the API on a single
 origin. PostgreSQL is the real target (see [Setup](#setup)); SQLite is enough to look around.
 
-**[Live demo: AI-Powered Complaint Management System](https://ai-powered-complaint-management-system-ky8u.onrender.com)** — Render reported
-the new service Live at commit `d68afdd`, with successful application startup and database
-migrations. The free instance may sleep after inactivity. Public end-to-end functionality
-has not yet been independently verified. The full reviewer UI and Care Documentation
-Reliability Lab in this branch require a subsequent deployment after merging PR #4.
-See [DEPLOYMENT.md](DEPLOYMENT.md). It is listed here
-as broken rather than linked as if it worked.
+**[Live demo](https://ai-powered-complaint-management-system-ky8u.onrender.com)** — on Render's
+free tier, so the first request after a period of inactivity takes a minute or so to wake the
+instance. `/api/health` reports the real database, schema and model state. The reviewer
+interface and the Care Documentation Reliability Lab reach the demo with the deployment that
+follows this branch being merged. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
