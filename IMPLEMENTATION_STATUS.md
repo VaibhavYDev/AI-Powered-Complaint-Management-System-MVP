@@ -17,7 +17,7 @@ States: NOT STARTED · IN PROGRESS · VERIFIED · BLOCKED (EXTERNAL) · FAILED
 
 ## Verified facts
 
-- Backend **278 tests** (275 pass locally; 3 need PostgreSQL and run in CI).
+- Backend **279 tests** (276 pass locally; 3 need PostgreSQL and run in CI).
 - Frontend **17 unit tests** and **3 browser end-to-end tests**.
 - The browser suite passes against the stub provider *and* against the real Groq API.
 - The CI smoke job was replayed locally against a real container, step for step: `SMOKE OK`.
