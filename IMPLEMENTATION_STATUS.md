@@ -7,7 +7,7 @@ States: NOT STARTED · IN PROGRESS · VERIFIED · BLOCKED (EXTERNAL) · FAILED
 |---|---|---|
 | 0 Live deployment | BLOCKED (EXTERNAL) | Code-side work done and verified; Render sync needs dashboard access |
 | 1 Security & correctness | VERIFIED | Merged in PR #1; 211 backend tests green on `main` (CI run on `d68afdd` succeeded) |
-| 2 Evidence & human review | IN PROGRESS | Backend complete and verified (215 tests): atomic review transitions, mandatory acknowledgment of unsupported values. Reviewer **UI not built**: API client and Redux actions are in place, the panel component is not |
+| 2 Evidence & human review | VERIFIED | Backend + reviewer UI work together; full workflow exercised in a browser (extract -> flagged unsupported value -> acknowledge -> approve -> export -> edit revokes approval at revision 2) |
 | 3 Care Documentation Reliability Lab | NOT STARTED | |
 | 4 Real-model evaluation | NOT STARTED | |
 | 5 Provider reliability & observability | NOT STARTED | |
@@ -53,21 +53,16 @@ from here.
 
 Branch `feat/review-ui-and-care-lab`, based on `main` (`d68afdd`).
 
-Done and verified on this branch:
-- Review decisions are applied by one conditional UPDATE guarded by owner, revision **and**
-  pending status, so two reviewers cannot both write and a decision cannot silently overwrite
-  another. Covered by `test_two_reviewers_cannot_both_apply_a_decision` and a direct stale-
-  revision test.
-- Approving a record that still holds values absent from the source is refused with 422 until
-  `acknowledge_unsupported` is set; a fully supported record needs no acknowledgment.
-- Frontend groundwork: `api.approve/reject/history/exportRecord` and the `decide` / `loadHistory`
-  Redux thunks. Additive - 13 frontend tests and the production build still pass.
+Phase 2 is complete. Verified in a real browser against a live backend and the real model:
+per-field evidence badges (quoted / matched / inferred / not in source / you set with excerpt and
+page in the tooltip), the unsupported-value panel with its acknowledgment gate, approve and
+reject with reviewer notes, revision-conflict errors, audit history, source text, and the
+approved-only mock export. Editing an approved record returned it to `needs_review` at revision 2
+and the export button disappeared.
 
-Next step, in order:
-1. `frontend/src/components/ReviewPanel.jsx` consuming `decide` / `loadHistory`, plus per-field
-   evidence badges in `ComplaintForm.jsx` (verbatim / normalized / derived / unsupported /
-   user_supplied) and the source text. Nothing consumes the new store actions yet.
-2. Phase 3 Care Documentation Reliability Lab.
-3. Phase 4 benchmark and real-model evaluation (a working Groq key is in `backend/.env`; the
+Next, in order:
+1. Phase 3 Care Documentation Reliability Lab.
+2. Phase 4 benchmark and real-model evaluation (a working Groq key is in `backend/.env`; the
    model actually served is `openai/gpt-oss-20b`, since `gemma2-9b-it` is retired).
-4. Phases 5-7, then deployment once the Render sync below is done.
+3. Phase 5 provider reliability and telemetry, Phase 6 browser/E2E coverage, Phase 7 README.
+4. Phase 8 deployment, once the Render sync below is done.

@@ -1,5 +1,16 @@
 import { useSelector } from "react-redux";
 import RiskAssessment from "./RiskAssessment";
+import ReviewPanel from "./ReviewPanel";
+
+// Where a value came from. A match proves the characters are in the source, not that the
+// reading is right, so quoted evidence is shown as a pointer rather than a guarantee.
+const EVIDENCE = {
+  verbatim: { label: "quoted", classes: "text-emerald-700" },
+  normalized: { label: "matched", classes: "text-emerald-700" },
+  derived: { label: "inferred", classes: "text-slate-500" },
+  unsupported: { label: "not in source", classes: "text-red-600" },
+  user_supplied: { label: "you set", classes: "text-amber-600" },
+};
 
 const SECTIONS = [
   {
@@ -69,6 +80,7 @@ function display(key, value) {
 export default function ComplaintForm() {
   const { complaint, patch } = useSelector((s) => s.copilot);
   const risk = complaint?.risk_assessment;
+  const evidence = complaint?.evidence ?? {};
 
   return (
     <section className="flex flex-col gap-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -118,11 +130,25 @@ export default function ComplaintForm() {
               {fields.map(([f, label, wide]) => {
                 const value = data[f];
                 const updated = patch?.[key]?.[f] !== undefined;
+                const source = EVIDENCE[evidence[`${key}.${f}`]?.status];
+                const excerpt = evidence[`${key}.${f}`]?.excerpt;
+                const page = evidence[`${key}.${f}`]?.page;
                 return (
                   <div key={f} className={`min-w-0 ${wide ? "md:col-span-2" : ""}`}>
                     <div className="mb-1 flex items-center justify-between text-xs">
                       <span className="font-medium text-slate-600">{label}</span>
-                      {updated && <span className="font-medium text-amber-600">updated</span>}
+                      {updated ? (
+                        <span className="font-medium text-amber-600">updated</span>
+                      ) : (
+                        source && (
+                          <span
+                            className={`font-medium ${source.classes}`}
+                            title={excerpt ? `${page ? `page ${page}: ` : ""}…${excerpt}…` : undefined}
+                          >
+                            {source.label}
+                          </span>
+                        )
+                      )}
                     </div>
                     <div
                       className={`min-h-9 rounded-md border px-3 py-1.5 text-sm break-words transition-colors ${
@@ -144,6 +170,7 @@ export default function ComplaintForm() {
       })}
 
       <RiskAssessment risk={risk} />
+      <ReviewPanel />
     </section>
   );
 }

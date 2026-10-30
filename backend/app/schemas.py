@@ -293,6 +293,7 @@ class Complaint(ComplaintData):
     status: ReviewStatus = ReviewStatus.needs_review
     revision: int = 1
     evidence: dict[str, dict] = {}
+    source_text: str | None = None
     reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
