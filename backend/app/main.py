@@ -121,6 +121,7 @@ def health():
         "schema": "ready" if _schema["ready"] else "pending",
         "schema_error": _schema["error"],
         "groq_configured": bool(settings.groq_api_key),
+        "revision": settings.git_commit or None,
         **model_status(),
     }
 

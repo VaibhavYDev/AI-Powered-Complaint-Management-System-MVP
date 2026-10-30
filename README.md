@@ -298,12 +298,12 @@ encryption, data-residency guarantees, or any GxP/GDPR compliance position.
 
 | Suite | Count | What it covers |
 |---|---|---|
-| Backend (`pytest`) | **279** | Schema normalisation and rejection, EDIT patch safety, evidence labelling, auth and cross-workspace isolation, review concurrency, PDF limits, migrations, care checks, benchmark scoring, HTTP contract. 3 need PostgreSQL and are skipped without it — CI provides one. |
+| Backend (`pytest`) | **280** | Schema normalisation and rejection, EDIT patch safety, evidence labelling, auth and cross-workspace isolation, review concurrency, PDF limits, migrations, care checks, benchmark scoring, HTTP contract. 3 need PostgreSQL and are skipped without it — CI provides one. |
 | Frontend (`vitest`) | **17** | Session/CSRF handling in the API layer, Redux reducers and thunks. |
 | Browser (`playwright`) | **3** | A real Chromium against the built app served by the real API, with a real database, sessions and CSRF. |
 
 ```bash
-cd backend && python -m pytest -q                    # 276 passed, 3 skipped without PostgreSQL
+cd backend && python -m pytest -q                    # 277 passed, 3 skipped without PostgreSQL
 cd frontend && npm test                              # 17 passed
 cd frontend && npm run e2e                           # builds, then 3 browser tests
 ```
@@ -407,7 +407,7 @@ the whole product and the browser needs no configuration.
 | `POST` | `/api/care` | Analyse a caregiver note |
 | `GET` | `/api/care` · `/api/care/{id}` · `/history` · `/export` | Care records, audit, export |
 | `POST` | `/api/care/{id}/approve` · `/reject` | Care review decision |
-| `GET` | `/api/health` | Liveness; always 200, body reports database, schema and model state |
+| `GET` | `/api/health` | Liveness; always 200, body reports database, schema, model and the deployed revision |
 | `GET` | `/api/ready` | Readiness; 503 until the service can actually serve |
 
 <details>
@@ -496,7 +496,7 @@ backend/app/care/   schemas · checks · extract        the reliability lab
 backend/alembic/    migrations 0001–0004
 backend/eval/       43-case benchmark, scorer, committed run reports
 backend/scripts/    stub_groq.py (CI) · e2e.py (real provider) · probe_models.py
-backend/tests/      279 tests
+backend/tests/      280 tests
 frontend/src/       App · store · api · components/{ComplaintForm,Copilot,RiskAssessment,ReviewPanel,CareLab}
 frontend/e2e/       browser tests; screenshots are a by-product of the real-provider run
 samples/            fictional complaint PDFs + their generator

@@ -25,7 +25,7 @@ where it matters.
 ## Verification
 
 - [x] `docker compose up -d` → PostgreSQL reachable
-- [x] Backend suite: **279 tests pass** against a real PostgreSQL 16 container (276 pass on
+- [x] Backend suite: **280 tests pass** against a real PostgreSQL 16 container (277 pass on
       SQLite alone; 3 migration tests need PostgreSQL)
 - [x] Frontend unit suite: **17 tests pass**
 - [x] Browser suite: **3 end-to-end tests pass**, against the stubbed provider *and* against the

@@ -27,11 +27,15 @@ first request after a quiet period is slow. That is the plan's behaviour, not a 
 
 Render builds from `main`. With auto-deploy on, merging to `main` is the deploy; otherwise use
 **Manual Deploy → Deploy latest commit** in the service. Watch **Events** and **Logs** until the
-deploy is Live, then check the revision is the one you expect:
+deploy is Live, then check which revision is actually serving:
 
 ```bash
 curl -s https://ai-powered-complaint-management-system-ky8u.onrender.com/api/health
 ```
+
+`revision` in that response is the commit the running instance was built from - Render sets
+`RENDER_GIT_COMMIT` for every build, and anywhere else `GIT_COMMIT` does the same job. It is
+`null` when the platform did not say, which is the honest answer rather than a guess.
 
 The schema is owned by alembic and upgraded at startup. A failed upgrade does not kill the
 service: it serves in a reported degraded state and retries, so `/api/health` tells you what

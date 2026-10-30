@@ -77,6 +77,19 @@ def test_ai_failures_map_to_http(client, fake_graph):
 def test_health(client):
     body = client.get("/api/health").json()
     assert body["database"] == "ok" and body["groq_configured"] is True
+    assert "revision" in body  # null when the platform did not say, never missing
+
+
+def test_the_platform_build_revision_is_reported_when_it_is_known(monkeypatch):
+    """A deployment has to be identifiable from outside, not inferred from what the page
+    happens to contain. Render names it RENDER_GIT_COMMIT; anywhere else, GIT_COMMIT."""
+    from app.config import Settings
+
+    assert Settings().git_commit == ""
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "deadbeef1234")
+    assert Settings().git_commit == "deadbeef1234"
+    monkeypatch.setenv("GIT_COMMIT", "cafe5678")
+    assert Settings().git_commit == "cafe5678"
 
 
 def test_hosted_postgres_urls_get_the_psycopg_driver():

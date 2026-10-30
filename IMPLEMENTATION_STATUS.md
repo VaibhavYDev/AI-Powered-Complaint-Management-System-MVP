@@ -20,7 +20,7 @@ Everything that does not need GitHub write access is done.
 
 ## Verified on the release code
 
-- Backend **279 tests** pass against a real PostgreSQL 16 container (276 on SQLite alone; 3
+- Backend **280 tests** pass against a real PostgreSQL 16 container (277 on SQLite alone; 3
   migration tests need PostgreSQL).
 - Frontend **17** unit tests; production build clean.
 - Browser **3** end-to-end tests, against the stub provider *and* the real Groq API, on Windows
