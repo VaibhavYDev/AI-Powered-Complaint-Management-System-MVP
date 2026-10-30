@@ -1,7 +1,7 @@
 """Persistence. Every read and write is scoped to an owner in the query itself, so a record
 belonging to another workspace cannot be reached even if its id is guessed."""
 
-from sqlalchemy import select
+from sqlalchemy import select, update as sql_update
 from sqlalchemy.orm import Session
 
 from .merge import apply_patch
@@ -81,18 +81,43 @@ def update(
     return record
 
 
-def review(db: Session, record: ComplaintRecord, status: str, actor_id: int, note: str | None = None) -> ComplaintRecord:
-    record.status = status
-    record.reviewed_at = datetime.now(timezone.utc)
-    record.reviewed_by = actor_id
+def review(
+    db: Session,
+    complaint_id: int,
+    owner_id: int,
+    expected_revision: int,
+    status: str,
+    actor_id: int,
+    note: str | None = None,
+) -> ComplaintRecord | None:
+    """Apply a review decision only if the record is still at the revision the reviewer saw and
+    still awaiting one.
+
+    The check and the write are one statement, so two reviewers acting at the same time cannot
+    both succeed: the second matches no row and is told the record moved on. Requiring the
+    pending status as well means a decision cannot be overwritten by a second decision - the
+    record has to be edited back into review first.
+    """
+    result = db.execute(
+        sql_update(ComplaintRecord)
+        .where(
+            ComplaintRecord.id == complaint_id,
+            ComplaintRecord.owner_id == owner_id,
+            ComplaintRecord.revision == expected_revision,
+            ComplaintRecord.status == "needs_review",
+        )
+        .values(status=status, reviewed_at=datetime.now(timezone.utc), reviewed_by=actor_id)
+    )
+    if result.rowcount == 0:
+        db.rollback()
+        return None
     db.add(
         ComplaintEvent(
-            complaint_id=record.id, actor_id=actor_id, action=status, revision=record.revision, note=note
+            complaint_id=complaint_id, actor_id=actor_id, action=status, revision=expected_revision, note=note
         )
     )
     db.commit()
-    db.refresh(record)
-    return record
+    return get(db, complaint_id, owner_id)
 
 
 def events(db: Session, complaint_id: int) -> list[ComplaintEvent]:

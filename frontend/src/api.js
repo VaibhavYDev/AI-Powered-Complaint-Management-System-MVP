@@ -40,3 +40,37 @@ export function upload(file) {
 }
 
 export const health = () => request("/api/health");
+
+const review = (id, action, body) =>
+  request(`/api/complaints/${id}/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const approve = (id, revision, acknowledgeUnsupported, note) =>
+  review(id, "approve", { revision, acknowledge_unsupported: acknowledgeUnsupported, note });
+
+export const reject = (id, revision, note) => review(id, "reject", { revision, note });
+
+export const history = (id) => request(`/api/complaints/${id}/history`);
+
+export const exportRecord = (id) => request(`/api/complaints/${id}/export`);
+
+export const analyseNote = (note, carePlan) =>
+  request("/api/care", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note, care_plan: carePlan }),
+  });
+
+export const decideCare = (id, action, revision, acknowledged, note) =>
+  request(`/api/care/${id}/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ revision, acknowledged, note }),
+  });
+
+export const careHistory = (id) => request(`/api/care/${id}/history`);
+
+export const exportCare = (id) => request(`/api/care/${id}/export`);

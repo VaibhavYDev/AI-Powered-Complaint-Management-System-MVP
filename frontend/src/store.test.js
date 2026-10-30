@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { sendMessage, store, uploadDocument, reset } from "./store.js";
+import { decide, loadHistory, sendMessage, store, uploadDocument, reset } from "./store.js";
 
 const RISK = { severity_class: "III", severity_reason: "Cosmetic.", confidence: 0.8 };
 const COMPLAINT = { id: 1, reference: "CC-2026-0001", product: { batch_number: "PCM24031" } };
@@ -72,5 +72,49 @@ describe("copilot slice", () => {
     const s = dispatch(reset());
     expect(s.complaint).toBeNull();
     expect(s.messages).toHaveLength(1);
+  });
+});
+
+describe("review decisions", () => {
+  it("keeps the evidence summary from the last AI operation", () => {
+    dispatch(reset());
+    const review = { unsupported: ["complaint.complaint_received_date"], derived: [], missing: [], quoted: 5 };
+    const s = dispatch({
+      type: sendMessage.fulfilled.type,
+      payload: { intent: "LOG", message: "Logged.", complaint: COMPLAINT, patch: null, review },
+    });
+    expect(s.review).toEqual(review);
+    expect(s.events).toEqual([]);
+  });
+
+  it("replaces the complaint and audit trail once a decision is applied", () => {
+    dispatch(reset());
+    const approved = { ...COMPLAINT, status: "approved", revision: 1 };
+    const events = [{ action: "extracted", revision: 1 }, { action: "approved", revision: 1 }];
+
+    let s = dispatch({ type: decide.pending.type });
+    expect(s.busy).toBe("reviewing");
+
+    s = dispatch({ type: decide.fulfilled.type, payload: { complaint: approved, events } });
+    expect(s.busy).toBeNull();
+    expect(s.complaint.status).toBe("approved");
+    expect(s.events).toHaveLength(2);
+  });
+
+  it("surfaces a revision conflict as an error message", () => {
+    dispatch(reset());
+    const s = dispatch({
+      type: decide.rejected.type,
+      payload: "This complaint changed while you were reviewing it.",
+      error: {},
+    });
+    expect(s.busy).toBeNull();
+    expect(s.messages.at(-1)).toMatchObject({ role: "error" });
+  });
+
+  it("loads history on demand", () => {
+    dispatch(reset());
+    const s = dispatch({ type: loadHistory.fulfilled.type, payload: [{ action: "extracted", revision: 1 }] });
+    expect(s.events).toHaveLength(1);
   });
 });

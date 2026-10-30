@@ -90,7 +90,9 @@ create table complaints (
 def postgres_schema():
     """An empty schema of its own, dropped afterwards, so tests cannot collide."""
     name = f"mig_{uuid.uuid4().hex[:10]}"
-    admin = sa.create_engine(POSTGRES_URL, isolation_level="AUTOCOMMIT")
+    admin = sa.create_engine(
+        POSTGRES_URL, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 5}
+    )
     with admin.connect() as conn:
         conn.execute(sa.text(f'create schema "{name}"'))
     url = f"{POSTGRES_URL}{'&' if '?' in POSTGRES_URL else '?'}options=-csearch_path%3D{name}"

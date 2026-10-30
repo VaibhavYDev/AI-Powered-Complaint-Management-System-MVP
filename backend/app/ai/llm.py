@@ -13,9 +13,12 @@ result is validated by the same Pydantic model.
 
 import json
 import logging
+import time
+from collections import Counter
 from typing import TypeVar
 
 from groq import APIConnectionError, APIError, APIStatusError, Groq
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
@@ -45,6 +48,37 @@ class AIOutputError(RuntimeError):
 
 class AIProviderError(RuntimeError):
     pass
+
+
+# Privacy-safe counters. Nothing here records prompts, documents or model output: only how many
+# calls were made, how long they took, how many tokens they cost and what went wrong.
+telemetry: dict = {
+    "calls": 0,
+    "retries": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "seconds": 0.0,
+    "errors": Counter(),
+}
+
+
+def reset_telemetry() -> None:
+    telemetry.update(calls=0, retries=0, prompt_tokens=0, completion_tokens=0, total_tokens=0, seconds=0.0)
+    telemetry["errors"] = Counter()
+
+
+class _TokenCounter(BaseCallbackHandler):
+    """Reads the usage the provider reports; it never sees more than the token totals."""
+
+    def on_llm_end(self, response, **kwargs) -> None:
+        usage = (response.llm_output or {}).get("token_usage") or {}
+        telemetry["prompt_tokens"] += usage.get("prompt_tokens", 0)
+        telemetry["completion_tokens"] += usage.get("completion_tokens", 0)
+        telemetry["total_tokens"] += usage.get("total_tokens", 0)
+
+
+_counter = _TokenCounter()
 
 
 # Which model actually serves requests, and why, if it is not the configured one.
@@ -151,14 +185,28 @@ def strict_mode() -> bool:
     return output_method(_active_model) == "json_schema"
 
 
+def _client(**extra) -> ChatGroq:
+    """The one place a provider client is built.
+
+    `max_retries` is the SDK's own bounded retry with exponential backoff and jitter, which is
+    what absorbs the 429s that token-per-minute limits produce in bursts. `timeout` bounds a
+    single attempt so a stalled inference cannot hold a worker open.
+    """
+    return ChatGroq(
+        model=_active_model,
+        api_key=settings.groq_api_key,
+        temperature=0,
+        max_retries=settings.llm_max_retries,
+        timeout=settings.llm_timeout_seconds,
+        **extra,
+    )
+
+
 def _runnable(schema: type[BaseModel]):
-    # max_retries=5: the SDK backs off on 429s, which free-tier token-per-minute limits produce in bursts.
     if strict_mode():
-        llm = ChatGroq(model=_active_model, api_key=settings.groq_api_key, temperature=0, max_retries=5,
-                       reasoning_effort=settings.groq_reasoning_effort)
-        return llm.with_structured_output(strict_json_schema(schema), method="json_schema", strict=True)
-    llm = ChatGroq(model=_active_model, api_key=settings.groq_api_key, temperature=0, max_retries=5)
-    return llm.with_structured_output(method="json_mode")
+        client = _client(reasoning_effort=settings.groq_reasoning_effort)
+        return client.with_structured_output(strict_json_schema(schema), method="json_schema", strict=True)
+    return _client().with_structured_output(method="json_mode")
 
 
 def _error_code(exc: APIStatusError) -> str:
@@ -172,15 +220,24 @@ def _error_field(exc: APIStatusError, field: str) -> str:
 
 def _call(schema: type[T], runnable, messages) -> T:
     """One model call -> dict -> Pydantic. Any bad output surfaces as OutputParserException."""
+    telemetry["calls"] += 1
+    started = time.perf_counter()
     try:
-        raw = runnable.invoke(messages)
+        raw = runnable.invoke(messages, config={"callbacks": [_counter]})
     except APIStatusError as exc:
+        telemetry["errors"][_error_code(exc) or f"http_{exc.status_code}"] += 1
         if _error_code(exc) == "json_validate_failed":  # Groq itself rejected the generation
             raise OutputParserException("Model produced invalid JSON.", llm_output="") from exc
         raise
+    except APIConnectionError:
+        telemetry["errors"]["connection"] += 1
+        raise
+    finally:
+        telemetry["seconds"] += time.perf_counter() - started
     try:
         return schema.model_validate(raw)
     except ValidationError as exc:
+        telemetry["errors"]["schema_validation"] += 1
         raise OutputParserException(f"Schema validation failed: {exc}", llm_output=json.dumps(raw)) from exc
 
 
@@ -188,6 +245,7 @@ def _call_with_one_retry(schema: type[T], runnable, messages) -> T:
     try:
         return _call(schema, runnable, messages)
     except OutputParserException as exc:
+        telemetry["retries"] += 1
         log.warning("Invalid %s output, retrying once: %s", schema.__name__, str(exc)[:300])
         messages += [
             AIMessage(exc.llm_output or "{}"),

@@ -57,6 +57,37 @@ jobs:
       - run: npm run build
         working-directory: frontend
 
+  e2e:
+    # A real browser against the built app served by the real API, with a real database,
+    # real sessions and real CSRF. Only the model provider is replaced (backend/scripts/
+    # stub_groq.py), so this runs on every pull request without a secret.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm run e2e
+        working-directory: frontend
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure
+          path: frontend/test-results/
+          retention-days: 7
+
   smoke:
     runs-on: ubuntu-latest
     steps:
@@ -93,5 +124,16 @@ jobs:
             -H 'Content-Type: application/json' --data @body.json)" = "403"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/api/chat \
             -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' --data @body.json)" = "401"
+      - name: The care lab is reachable and equally protected
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/care)" = "401"
+          csrf=$(curl -s -c jar2 -X POST localhost:8080/api/auth/anonymous | sed -E 's/.*"csrf_token":"([^"]+)".*/\1/')
+          test "$(curl -s -b jar2 -o /dev/null -w '%{http_code}' localhost:8080/api/care)" = "200"
+          printf '{"note":"Anna Keller: redness at the left heel."}' > care.json
+          # No model key in CI, so the call must fail cleanly at the provider rather than 404 or 500.
+          code=$(curl -s -b jar2 -o /dev/null -w '%{http_code}' -X POST localhost:8080/api/care \
+            -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' --data @care.json)
+          echo "care extract -> $code"
+          test "$code" = "503"
       - if: always()
         run: docker logs copilot

@@ -293,6 +293,7 @@ class Complaint(ComplaintData):
     status: ReviewStatus = ReviewStatus.needs_review
     revision: int = 1
     evidence: dict[str, dict] = {}
+    source_text: str | None = None
     reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
@@ -307,6 +308,8 @@ class ReviewRequest(BaseModel):
     # The revision the reviewer actually looked at; a newer one means someone changed it since.
     revision: int
     note: str | None = Field(None, max_length=500)
+    # Approving a record that still contains values absent from the source has to be deliberate.
+    acknowledge_unsupported: bool = False
 
 
 class ComplaintEventOut(BaseModel):

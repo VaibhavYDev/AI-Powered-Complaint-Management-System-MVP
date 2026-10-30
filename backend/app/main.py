@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 from .ai.llm import AIConfigError, AIOutputError, AIProviderError, model_status, resolve_model
 from .ai.nodes import NoComplaintToEdit, NothingExtracted
 from .api.auth import router as auth_router
+from .api.care import router as care_router
 from .api.complaints import router
 from .config import settings
 from .db import engine
@@ -60,6 +61,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router)
+app.include_router(care_router)
 app.include_router(router)
 
 # Expected failures map to HTTP errors here so the endpoints stay free of try/except.
@@ -119,6 +121,7 @@ def health():
         "schema": "ready" if _schema["ready"] else "pending",
         "schema_error": _schema["error"],
         "groq_configured": bool(settings.groq_api_key),
+        "revision": settings.git_commit or None,
         **model_status(),
     }
 

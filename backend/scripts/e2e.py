@@ -12,9 +12,16 @@ from pathlib import Path
 
 import httpx
 
+# Model output contains whatever punctuation the model felt like; a Windows console defaults to
+# cp1252 and would abort the run on the first non-breaking hyphen.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 SAMPLES = Path(__file__).resolve().parents[2] / "samples"
 client = httpx.Client(base_url=BASE, timeout=120)
+# The API hands out an anonymous workspace, and every state-changing request has to echo that
+# session's CSRF token. The session cookie itself rides on the client's own jar.
+client.headers["X-CSRF-Token"] = client.post("/api/auth/anonymous").json()["csrf_token"]
 
 LOG_MESSAGE = (
     "Customer Rahul Sharma reported that Paracetamol 500 mg tablets from batch PCM24031 were chipped and "

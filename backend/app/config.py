@@ -1,6 +1,6 @@
 import re
 
-from pydantic import field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,8 +20,15 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
     max_upload_bytes: int = 10 * 1024 * 1024
     max_document_chars: int = 12_000
+    # A single inference must not be able to hold a worker open indefinitely.
+    llm_timeout_seconds: float = 45.0
+    llm_max_retries: int = 3
     db_connect_timeout: int = 5
     health_cache_seconds: float = 5.0
+    # Which revision is actually serving. Render sets RENDER_GIT_COMMIT on every build; any other
+    # platform can set GIT_COMMIT. Reported by /api/health so a deployment can be identified from
+    # outside instead of inferred from what the page happens to contain.
+    git_commit: str = Field("", validation_alias=AliasChoices("GIT_COMMIT", "RENDER_GIT_COMMIT"))
     max_pdf_pages: int = 50
     max_pdf_seconds: float = 15.0
 

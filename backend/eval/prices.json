@@ -1,0 +1,8 @@
+{
+  "openai/gpt-oss-20b": {
+    "input_per_m": 0.075,
+    "output_per_m": 0.3,
+    "source": "console.groq.com/docs/models",
+    "checked": "2026-10-30"
+  }
+}

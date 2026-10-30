@@ -37,33 +37,49 @@ class FieldEvidence:
     page: int | None = None
 
 
-def verify(data: ComplaintData, source: str) -> dict:
-    """Evidence for every populated field, keyed by "section.field"."""
+def verify_values(values: dict[str, Any], source: str, judgements: set[str] = frozenset()) -> dict:
+    """Evidence for each populated value, keyed by its path.
+
+    `judgements` names paths whose value is interpreted rather than quoted, so that not finding
+    it in the source is expected instead of suspicious.
+    """
     pages = _page_spans(source)
     haystack = source.casefold()
     evidence: dict[str, dict] = {}
 
-    for section, model in SECTIONS.items():
-        values = getattr(data, section)
-        for name, field in model.model_fields.items():
-            value = getattr(values, name)
-            if value is None:
-                continue
-            found = _locate(value, source, haystack)
-            if found is None:
-                status = DERIVED if _is_judgement(field.annotation, name, value) else UNSUPPORTED
-                evidence[f"{section}.{name}"] = asdict(FieldEvidence(status=status))
-                continue
-            status, offset, length = found
-            evidence[f"{section}.{name}"] = asdict(
-                FieldEvidence(
-                    status=status,
-                    excerpt=_excerpt(source, offset, length),
-                    offset=offset,
-                    page=_page_of(offset, pages),
-                )
+    for path, value in values.items():
+        if value is None:
+            continue
+        found = _locate(value, source, haystack)
+        if found is None:
+            status = DERIVED if path in judgements else UNSUPPORTED
+            evidence[path] = asdict(FieldEvidence(status=status))
+            continue
+        status, offset, length = found
+        evidence[path] = asdict(
+            FieldEvidence(
+                status=status,
+                excerpt=_excerpt(source, offset, length),
+                offset=offset,
+                page=_page_of(offset, pages),
             )
+        )
     return evidence
+
+
+def verify(data: ComplaintData, source: str) -> dict:
+    """Evidence for every populated complaint field, keyed by "section.field"."""
+    values: dict[str, Any] = {}
+    judgements: set[str] = set()
+    for section, model in SECTIONS.items():
+        populated = getattr(data, section)
+        for name, field in model.model_fields.items():
+            value = getattr(populated, name)
+            path = f"{section}.{name}"
+            values[path] = value
+            if value is not None and _is_judgement(field.annotation, name, value):
+                judgements.add(path)
+    return verify_values(values, source, judgements)
 
 
 def summarize(data: ComplaintData, evidence: dict) -> dict:
