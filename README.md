@@ -1,264 +1,327 @@
 # AIVOA Complaint Co-pilot
 
-AI-powered Customer Complaint intake for a pharmaceutical Quality Management System (QMS).
-Built for the AIVOA "AI Product Engineer (Interns)" Round 1 assignment.
+AI-assisted intake for pharmaceutical customer complaints, built around one rule: **the user
+never fills the form.** They paste a customer email, describe the problem, ask for a correction,
+or drop a PDF. A LangGraph workflow turns that into a validated complaint record, marks where
+every value came from, assesses patient risk, and holds the whole thing as a *suggestion* until
+a human approves it.
 
-The user never fills the complaint form by hand. They talk to the **AIVOA Co-pilot** — paste a
-customer email, describe the issue, ask for a correction, or upload a complaint PDF — and a
-LangGraph workflow turns that into a validated, persisted complaint record plus an AI-assisted
-risk assessment. The form on the left is a live view of that structured state.
+The interesting part is not that a model can fill a form. It is everything built around the
+model so that its output can be trusted in a regulated process: strict schema validation,
+provenance for every extracted value, partial edits that cannot silently erase data, approval
+gates, an audit trail, and a 43-case benchmark that measures how often the extraction is
+actually right.
 
-> This is an MVP that demonstrates the workflow. It is not a validated GxP system and makes no
-> claim of regulatory compliance. The risk assessment is an AI-assisted triage aid for a human
-> reviewer, not a regulatory determination.
+> An MVP, not a validated GxP system. The risk assessment is an AI-assisted triage aid for a
+> human reviewer, never a regulatory determination. No claim of GDPR, GxP or clinical validation
+> is made, and nothing here should be used with real patient data.
 
-## Hosted demo
+---
 
-**https://aivoa-complaint-copilot.onrender.com** — Render free plan, so the service sleeps after
-15 minutes of inactivity and the first visit takes about a minute to wake. It is not always-on.
+## See it running
 
-The deployment is a single container: the React build is served by FastAPI, so the UI and the
-`/api` endpoints share one origin and the browser needs no backend configuration. `render.yaml`
-is the blueprint; `GET /api/health` reports database, schema and model state, and `/api/ready`
-returns 503 until the service can actually serve.
+![Complaint logged from one sentence](screenshots/02-log-populated.png)
 
-If the link is unresponsive the service needs a sync in the Render dashboard — see
-[DEPLOYMENT.md](DEPLOYMENT.md#restoring-the-render-service).
+One sentence of prose on the right; a structured QMS record on the left. Each field carries a
+provenance label — `quoted`, `matched`, `inferred`, `not in source` — so a reviewer can see at a
+glance which values the source actually supports.
 
-## Screenshots
-
-| Empty intake | LOG → populated form + risk assessment |
+| | |
 |---|---|
-| ![Empty state](screenshots/01-empty-state.png) | ![Logged complaint](screenshots/02-log-populated.png) |
+| ![Human review](screenshots/06-human-review.png) | ![Care lab](screenshots/08-care-lab.png) |
+| **Human review.** The one value the source does not support is listed by name, and approval is blocked until a reviewer accepts responsibility for it. | **Care Documentation Reliability Lab.** The note contained an instruction aimed at the reader; the model obeyed it, and the application caught it anyway. |
 
-| EDIT → only the batch number changes | EXTRACT → complaint from a PDF |
+More: [empty intake](screenshots/01-empty-state.png) ·
+[risk assessment in full](screenshots/03-risk-assessment.png) ·
+[an edit changing one field](screenshots/04-edit-highlight.png) ·
+[extraction from a PDF](screenshots/05-pdf-extract.png) ·
+[approved and exported](screenshots/07-approved-export.png)
+
+Every screenshot is produced by the browser test suite running against the real Groq API
+(`E2E_REAL=1 npm run e2e`), so they cannot drift from what the code does or be mocked up.
+
+### Running it yourself
+
+```bash
+docker build -t aivoa-copilot . && docker run -p 8000:8000 -e GROQ_API_KEY=sk-... -e DATABASE_URL=sqlite:////tmp/demo.db aivoa-copilot
+```
+
+Then open <http://localhost:8000>. One image contains the built React app and the API on a single
+origin. PostgreSQL is the real target (see [Setup](#setup)); SQLite is enough to look around.
+
+**Hosted demo: not currently serving.** A Render service exists at
+`aivoa-complaint-copilot.onrender.com`, but it has no healthy instance — it accepts the
+connection and returns nothing. The two code-side causes (a blueprint requesting paid plans, and
+a startup that blocked forever on an unreachable database) are both fixed and verified in this
+repository; what remains is a manual sync in the Render dashboard, which needs account access.
+The steps are in [DEPLOYMENT.md](DEPLOYMENT.md#restoring-the-render-service). It is listed here
+as broken rather than linked as if it worked.
+
+---
+
+## The problem
+
+Every customer complaint about a medicine has to be recorded, classified for potential patient
+harm, investigated, and — where warranted — fed into CAPA or a recall decision. The complaints
+arrive as free-text emails, phone notes and scanned forms. QA staff re-key them into structured
+fields before triage can even begin, which is slow and is itself a source of transcription
+error.
+
+So the obvious thing is to point an LLM at it. The non-obvious thing is what you then owe the
+reviewer: a way to tell a quoted fact from an invented one, a correction mechanism that cannot
+quietly destroy the rest of the record, and a refusal to treat model output as a record until a
+person has signed it off. That is most of what this repository is.
+
+## What it does
+
+| | |
 |---|---|
-| ![Edit highlight](screenshots/04-edit-highlight.png) | ![PDF extraction](screenshots/05-pdf-extract.png) |
-
-Section 5 in full: [screenshots/03-risk-assessment.png](screenshots/03-risk-assessment.png).
-Captured from the running application against the live backend.
-
-## Problem
-
-In API and finished-dosage-form manufacturing, every customer complaint must be recorded,
-classified for potential patient risk, investigated and — where warranted — feed into CAPA or
-recall decisions. Complaints arrive as free-text emails, phone notes and PDF forms, and QA staff
-spend a lot of time re-keying that information into structured QMS fields before triage can even
-begin. This project removes the re-keying step and gives the reviewer a first-pass risk triage
-immediately.
-
-## Key features
-
-- **LOG** — natural-language complaint → structured complaint record + AI risk assessment
-- **EDIT** — conversational corrections ("change the batch number to PCM24099") applied as a
-  *partial patch*; nothing else in the record is touched
-- **EXTRACT** — PDF upload → text extraction (pypdf) → structured complaint
-- **AI-assisted risk assessment** — severity class I/II/III, reasoning, immediate actions,
-  recommended follow-up, confidence; regenerated after edits that change complaint or patient facts
-- Strict boundary: LLM → structured JSON → Pydantic validation → application logic → PostgreSQL.
-  The model never touches the database and the frontend never sees raw model output.
-- Honest about missing data: anything not stated stays `null`; the co-pilot tells you which
-  fields are still missing.
+| **LOG** | Free text → a complete complaint record + an AI risk assessment. |
+| **EDIT** | "Actually change the batch number to PCM24099" → a *partial patch*. Unlisted fields are never touched; a model-emitted `null` never erases anything; clearing a field requires an explicit request. |
+| **EXTRACT** | PDF upload → text (pypdf) → the same structured record. Routed deterministically — a document is never sent to the router model. |
+| **Evidence** | Every extracted value is searched for in the source text and labelled `verbatim`, `normalized`, `derived` or `unsupported`, with the matching excerpt and page. |
+| **Review** | A record is `needs_review` until approved. Unsupported values must be acknowledged first. Editing an approved record sends it back for review. Every transition is recorded. |
+| **Care Lab** | A second, independent case study: caregiver shift notes, with checks for attribution, negation, contradiction, care-plan gaps and prompt injection. See [below](#care-documentation-reliability-lab). |
 
 ## Architecture
 
 ```
-React + Redux Toolkit (frontend)
-        │  POST /api/chat  { message, complaint_id }        POST /api/upload (PDF)
+React 19 + Redux Toolkit            session cookie + X-CSRF-Token
+        │  POST /api/chat { message, complaint_id }   POST /api/upload (PDF)
         ▼
-FastAPI (backend/app/api/complaints.py)
-        │  loads existing complaint (if any)                pypdf text extraction
+FastAPI  ── auth.py: session, ownership, CSRF, rate limit
+        │  documents.py: bounded PDF text extraction
         ▼
-LangGraph (backend/app/ai/graph.py)
+LangGraph  (ai/graph.py)
    START ─► route ─┬─► log ─────► assess_risk ─► END
                    ├─► extract ─► assess_risk ─► END
-                   └─► edit ────► (touches complaint/patient?) ─► assess_risk ─► END
+                   └─► edit ────► touches complaint/patient? ─► assess_risk ─► END
                                                              └─► END
-        │  every node = one Groq structured-output call, validated into a Pydantic model
+        │  every node: one Groq structured-output call → Pydantic model
         ▼
-Application logic: patch merge (merge.py) · persistence (crud.py) · SQLAlchemy JSONB (models.py)
-        │
+evidence.py  verify every value against the source text
+merge.py     apply the patch; decide what may change
+crud.py      owner-scoped persistence, atomic review transitions
         ▼
-CopilotResponse { intent, message, complaint_id, complaint, patch?, risk_assessment? }  ─► Redux ─► form
+PostgreSQL (JSONB per section) ── alembic migrations 0001–0004
+        ▼
+CopilotResponse ─► Redux ─► form + risk assessment + review panel
 ```
 
-Responsibilities, one place each:
+One concern, one place:
 
 | Concern | Where |
 |---|---|
-| Canonical complaint schema (Pydantic) | `backend/app/schemas.py` |
-| Prompts (field guide is generated from the schema) | `backend/app/ai/prompts.py` |
-| Groq calls, strict-schema / JSON-mode structured output, retry, model fallback | `backend/app/ai/llm.py` |
-| Graph nodes: route / log / edit / extract / assess_risk | `backend/app/ai/nodes.py` |
-| Graph wiring | `backend/app/ai/graph.py` |
-| EDIT patch semantics (what may change, what never can) | `backend/app/merge.py` |
-| Session identity, CSRF, rate limits | `backend/app/auth.py` |
-| Owner-scoped persistence | `backend/app/crud.py`, `backend/app/models.py` |
+| Canonical schema (LLM output, API, DB, UI state) | `backend/app/schemas.py` |
+| Groq calls, strict JSON Schema, retry, model fallback, telemetry | `backend/app/ai/llm.py` |
+| Graph nodes | `backend/app/ai/nodes.py` · wiring in `ai/graph.py` |
+| Prompts (field guide generated from the schema) | `backend/app/ai/prompts.py` |
+| What an EDIT may change | `backend/app/merge.py` |
+| Where a value came from | `backend/app/evidence.py` |
+| Session identity, ownership, CSRF, rate limits | `backend/app/auth.py` |
+| Persistence and review transitions | `backend/app/crud.py`, `backend/app/models.py` |
 | Schema migrations | `backend/alembic/versions/` |
-| HTTP endpoints + error mapping | `backend/app/api/complaints.py`, `backend/app/main.py` |
+| Care lab | `backend/app/care/` |
 
-### LangGraph workflow
+### The LangGraph workflow
 
-`route` is an LLM classification node that returns `{"intent": "LOG" | "EDIT" | "EXTRACT"}`
-(validated by the `RouterDecision` model). A conditional edge dispatches to the matching node.
-There is no second, hand-written router: the graph *is* the control flow.
+`route` classifies the message into `LOG | EDIT | EXTRACT` (validated as `RouterDecision`), and a
+conditional edge dispatches. The graph *is* the control flow — there is no second, hand-written
+router beside it.
 
-- **LOG** (`log_complaint`): `ComplaintData` structured output from the message → `assess_risk`.
-- **EDIT** (`edit_complaint`): the model receives the current record and returns an
-  `EditProposal` — a sparse list of operations,
-  `{"changes": [{"field": "batch_number", "value": "PCM24099"}], "clear": ["phone"]}`.
-  Every value is validated through the canonical section models (so `"yes"` becomes `true`
-  and a bad date is rejected), null values are ignored, and a field can only be nulled through
-  `clear`, which accepts known schema fields only. `merge.patch_from` turns the proposal into
-  `{section: {field: value}}` and `apply_patch` merges it into the existing record; unlisted
-  fields are never touched. Risk is re-assessed only if the patch touched the `complaint` or
-  `patient` sections, so a batch-number correction leaves the assessment untouched.
-- **EXTRACT** (`extract_complaint`): same schema as LOG with a document-oriented prompt.
-- **assess_risk**: `RiskAssessment` structured output from the (merged) complaint.
+Three details worth defending in review:
 
-Nodes raise plain exceptions for expected failures (`NoComplaintToEdit`, `NothingExtracted`)
-and `main.py` maps them to HTTP status codes, so endpoints contain no try/except.
+- **Documents skip the router.** An upload is known to be an extraction, so `route` short-circuits
+  without a model call: one less call, one less thing to get wrong, and the classifier can never
+  mislabel a PDF.
+- **The router classifies intent only.** It is not told whether an edit is currently possible.
+  An earlier version was, and would answer "LOG" to *"change the batch number to B999"* when no
+  complaint was loaded, creating a one-field complaint out of a correction. The precondition is
+  now enforced by the application (`400`), where it belongs.
+- **Risk is re-assessed only when it could have changed.** `_after_edit` inspects the patch: a
+  correction to the complainant's phone number does not spend a model call re-deriving a severity
+  class, but a change to the defect or the patient does.
 
-### Structured output and validation
+### Structured output, then validation
 
-All four model outputs (`RouterDecision`, `ComplaintData`, `EditProposal`, `RiskAssessment`)
-are Pydantic models in `schemas.py`; `ai/llm.py` chooses the Groq output method per model:
+Five model outputs — `RouterDecision`, `ComplaintData`, `EditProposal`, `RiskAssessment`,
+`CareNote` — are Pydantic models, and `ai/llm.py` picks the output method per model:
 
-- **gpt-oss models → Groq Structured Outputs, strict JSON Schema** —
-  `with_structured_output(strict_json_schema(Model), method="json_schema", strict=True)`.
-  The schema is generated from the Pydantic model (`model_json_schema()`) and adjusted to
-  Groq's strict subset: every property required, `additionalProperties: false` on each object,
-  nullable fields written as `type: ["string", "null"]` (Groq rejects `anyOf` unions), nullable
-  enums inlined with `null`, no `integer`/`number` overlap, unsupported keywords (`default`,
-  `minLength`, `minimum`, `format`, …) removed, date fields annotated `(YYYY-MM-DD)`. There is
-  no second, hand-written schema. In strict mode the schema travels with the request, so the
-  prompts omit the field guide they embed for JSON-object-mode models (~600 tokens per call).
-- **any other model → JSON Object Mode** — `with_structured_output(method="json_mode")`.
+- **gpt-oss models → Groq Structured Outputs, strict JSON Schema.** The schema is *derived* from
+  the Pydantic model and adapted to Groq's strict subset by `strict_json_schema()`: every
+  property required, `additionalProperties: false`, nullable fields as `type: ["string","null"]`
+  (Groq rejects `anyOf` unions and ambiguous `integer`/`number` unions), nullable enums inlined
+  with `null`, unsupported keywords stripped, date fields annotated `(YYYY-MM-DD)`. There is no
+  second hand-written schema to drift. In strict mode the schema travels with the request, so the
+  prompts drop the ~600-token field guide they need otherwise.
+- **anything else → JSON Object Mode.**
 
-In both cases the model's JSON is validated by the same Pydantic model (`Model.model_validate`),
-which also enforces the constraints the strict schema cannot express (non-empty lists,
-confidence 0–1, unparseable dates rejected). If Groq or Pydantic rejects the output, the model
-is shown the rejected JSON and the error and asked once for a corrected object; a second failure
-becomes `502 The AI returned malformed … data`. The schema normalises common spellings
-(`"Physical Defect"` → `physical_defect`, `85` → `0.85`, `"Not provided"` → `null`, `"45 years"` → `45`) but
-rejects values that do not fit the target type (`"maybe"` for a boolean, `"forty-two"` for an age,
-`"Packaging Defect"` for an enum), so a bad value can never turn into an accidental null.
+Either way the result is validated by the same Pydantic model, which enforces what a JSON Schema
+cannot: non-empty action lists, confidence in 0–1, dates that actually parse. The schema
+normalises the spellings models really produce (`"Physical Defect"` → `physical_defect`, `85` →
+`0.85`, `"Not provided"` → `null`, `"45 years"` → `45`) but **rejects** values that do not fit the
+target type, so a bad value can never degrade into a silent `null`. On rejection the model is
+shown its own output and the error once; a second failure is a `502`, not a guess.
 
-### Groq model note
+#### Why `EditProposal` is a flat list
 
-The assignment specifies `gemma2-9b-it`. Groq shut that model down on **2025-10-08**, and its
-suggested replacements from that time (`llama-3.1-8b-instant`, `llama-3.3-70b-versatile`) were
-shut down for free/developer tiers on **2026-08-16**. The configuration therefore separates the
-assignment requirement from the operational model:
+Strict schema mode makes *every* property required, which means a nested "patch object" cannot
+express sparsity — the model would have to emit all 31 fields to change one. So an edit is a
+sparse list instead:
+
+```json
+{ "changes": [{ "field": "batch_number", "value": "PCM24099" }], "clear": ["phone"] }
+```
+
+Each value is validated through its real target field before anything merges, `clear` accepts
+only known schema fields, and nulls in `changes` are ignored. Erasure is only ever explicit.
+
+### Evidence, and what a lexical match does not prove
+
+`evidence.py` searches the source text for each extracted value and labels it:
+
+| Label | Meaning |
+|---|---|
+| `verbatim` | the value appears in the source as written |
+| `normalized` | it appears in a different rendering (a date written another way, `500mg` vs `500 mg`) |
+| `derived` | correctly inferred but not literally present ("received today" → a date) |
+| `unsupported` | not findable in the source at all |
+| `user_supplied` | set by a person, not the model |
+
+This is deliberately a *pointer*, not a guarantee: a match proves the characters are in the
+source, not that the reading is right. The benchmark below found exactly where that breaks — an
+injected instruction inside a note is physically in the source, so a fabricated finding drawn
+from it is rated `verbatim`. That failure is contained by a separate deterministic check, not by
+asking the model more nicely.
+
+### Human review
+
+A record is a suggestion until a person approves it. The reviewer sees provenance per field, the
+source text, and a list of anything `unsupported`; approval is blocked until those are
+acknowledged. Approve/reject is a **single conditional UPDATE** guarded by owner, revision and
+current status, so two reviewers racing cannot both succeed. Editing an approved record returns
+it to `needs_review` at a new revision. Only an approved record can be exported.
+
+---
+
+## Care Documentation Reliability Lab
+
+An independent case study in the same codebase, aimed at a different domain: **caregiver shift
+notes**. All residents, notes and care plans are fictional, and nothing here makes a clinical
+judgement — the output is documentation for a person to review.
+
+One model call extracts observations; everything after it is deterministic, because the
+reliability of the result must not rest on the prompt. `care/checks.py` independently checks:
+
+- **Attribution** — is this observation about a resident the note actually names?
+- **Negation** — "No pain reported" is not a finding of pain. Clipped at sentence boundaries,
+  after a real run showed one resident's negation suppressing the next resident's entry.
+- **Contradiction** between observations, and **care-plan gaps** (a new wound with no matching
+  plan entry), honorific-tolerant after "Frau Anna Keller" vs "Anna Keller" produced false gaps.
+- **Injected instructions** — text addressed to the reader rather than describing a resident.
+  Any finding whose evidence points into such a span raises a high-priority alert that blocks
+  approval.
+
+### Measured results
+
+43 hand-written cases, ground truth authored before any model was run, scored by deterministic
+comparison. Three full runs on the same revision against `openai/gpt-oss-20b`; the spread is
+published rather than the best number. Full methodology, denominators and failure analysis in
+[EVALUATION.md](EVALUATION.md); raw per-case reports in `backend/eval/results/`.
+
+| Metric | run-002 | run-003 | run-004 |
+|---|---|---|---|
+| Cases fully correct | 39/43 | 39/43 | 41/43 |
+| Field exact match | 0.967 | 0.956 | 0.989 |
+| Observation recall | 0.974 | 0.947 | 1.000 |
+| Hallucination rate | 0.000 | 0.018 | 0.000 |
+| Negation error rate | 0.200 | 0.200 | 0.200 |
+| Abstention when expected | 1.000 | 1.000 | 1.000 |
+| Schema validation success | 1.000 | 1.000 | 1.000 |
+| Latency P50 / P95 (s) | 3.63 / 8.17 | 2.77 / 8.15 | 3.12 / 9.12 |
+
+Cost: **$0.00475 for 43 notes** (~$0.0001 per note) at Groq's published price, computed only
+when a price for that exact model is on file.
+
+**The model obeys 2 of 4 prompt injections. The application contains 4 of 4.** That gap is the
+point of the lab: the extraction is wrong and is scored as wrong, but a reviewer cannot approve
+it unseen.
+
+Negation is the weakest result and is reported as such: 1 failure in 5 opportunities, a
+safety-relevant category on a small denominator. Observation precision (~0.65–0.69) is
+deliberately left out of the headline table because the ground truth lists observations a correct
+reading *must* produce, not an exhaustive set — a model that also records "ate well" would be
+penalised for thoroughness. Ground truth was never relaxed to flatter a score.
+
+---
+
+## Model configuration
+
+The assignment specifies `gemma2-9b-it`. Groq shut that model down on **2025-10-08**, and the
+alternatives of that era (`llama-3.1-8b-instant`, `llama-3.3-70b-versatile`) were shut down for
+free and developer tiers on **2026-08-16**. Rather than quietly changing the requirement, the
+configuration separates it from the operational model:
 
 | Setting | Value | Role |
 |---|---|---|
-| `GROQ_MODEL` | `gemma2-9b-it` | Assignment model. Tried first, every startup. |
-| `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` | Current Groq production model used when Groq reports `GROQ_MODEL` decommissioned. `openai/gpt-oss-120b` is the larger option. |
-| — | `llama-3.3-70b-versatile` | Assignment-era alternative only; deprecated, not used as a fallback. |
+| `GROQ_MODEL` | `gemma2-9b-it` | The assignment model. Checked first, every startup. |
+| `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` | Serves requests when Groq does not serve `GROQ_MODEL`. `openai/gpt-oss-120b` is the larger option. |
 
-At startup `ai/llm.py` makes one call to Groq's model catalogue (`GET /models`). If
-`GROQ_MODEL` is not in it, the app switches to the fallback immediately and records why — no
-completion request is ever sent to a decommissioned model. `GET /api/health` always reports
-`configured_model`, `active_model` and `fallback_reason`, so the model in use is never
-misrepresented. As a safety net, a `model_decommissioned` / `model_not_found` error on a live
-request triggers the same switch. `scripts/probe_models.py` lists the models a key can access
-and runs one structured call through the app's own code path.
+One call to Groq's catalogue at startup decides which model serves requests, so a completion is
+never sent to a decommissioned model. `GET /api/health` always reports `configured_model`,
+`active_model` and `fallback_reason` — the model actually in use is never misrepresented, in the
+UI or in this README. A `model_decommissioned` error on a live request triggers the same switch
+as a safety net.
 
-`openai/gpt-oss-20b` supports Groq Structured Outputs (strict JSON Schema, used here) and returns
-its reasoning in a separate `reasoning` field, so `content` is pure JSON for the parser.
+## Security
 
-## Code walkthrough guide
-
-One request, end to end. Each step is one file and one function, in the order the code runs.
-
-```mermaid
-flowchart LR
-    UI[React form + Co-pilot<br/>Redux slice] -->|POST /api/chat<br/>POST /api/upload| API[api/complaints.py<br/>chat / upload]
-    API -->|load existing record| DB[(PostgreSQL<br/>models.py · crud.py)]
-    API -->|run_copilot| G[ai/graph.py<br/>LangGraph]
-    G --> R[route]
-    R -->|LOG| L[log_complaint]
-    R -->|EDIT| E[edit_complaint]
-    R -->|EXTRACT| X[extract_complaint]
-    L --> RA[assess_risk]
-    X --> RA
-    E -->|complaint/patient changed| RA
-    E -->|otherwise| P
-    RA --> P[_persist<br/>crud.create / crud.update]
-    P --> DB
-    P -->|CopilotResponse| UI
-    subgraph every node
-        S[ai/llm.py structured<br/>Groq strict JSON Schema → Pydantic]
-    end
-```
-
-| # | Step | Where | What to say |
-|---|---|---|---|
-| 1 | User types a message or drops a PDF | `frontend/src/components/Copilot.jsx` → `store.js` thunks `sendMessage` / `uploadDocument` | The form is never typed into; Redux state only changes from validated API responses. `sendMessage` sends the current `complaint.id` so the backend knows whether an EDIT is possible. |
-| 2 | Request arrives | `backend/app/api/complaints.py` → `chat()` / `upload()` | `ChatRequest` is validated by FastAPI. If `complaint_id` is given the record is loaded (404 if not). `upload()` runs `documents.extract_pdf_text` (pypdf) first. |
-| 3 | Graph runs | `backend/app/ai/graph.py` → `run_copilot()` | `StateGraph`: `START → route → {log, edit, extract}`; `log`/`extract` always go to `assess_risk`; `edit` only if the patch touched `complaint` or `patient`. No hand-written router anywhere else. |
-| 4 | Intent | `backend/app/ai/nodes.py` → `route()` | One model call returning `RouterDecision {intent}`. Documents are marked `[Uploaded document]`. |
-| 5 | Model call | `backend/app/ai/llm.py` → `structured()` | The **only** place raw model output exists. gpt-oss → Groq strict JSON Schema derived from the Pydantic model (`strict_json_schema`); other models → JSON Object Mode. Result → `Model.model_validate()`. One corrective retry, then `502`. Model fallback lives here too (`resolve_model`). |
-| 6a | LOG / EXTRACT | `nodes.py` → `log_complaint()` / `extract_complaint()` | Output type is the canonical `ComplaintData`; unstated facts are `null`; empty extraction → `422`. Reply text is built deterministically (`_summarize`). |
-| 6b | EDIT | `nodes.py` → `edit_complaint()` + `merge.py` | Model returns `EditProposal {changes:[{field,value}], clear:[...]}`. `EditProposal` validates each value through the real target field; `merge.patch_from` builds `{section:{field:value}}`; `apply_patch` merges — unlisted fields are untouched; nulls never erase; clears are explicit. |
-| 7 | Risk | `nodes.py` → `assess_risk()` | `RiskAssessment {severity_class I/II/III, reason, actions, follow-up, confidence}` + fixed disclaimer. |
-| 8 | Persist | `api/complaints.py` → `_persist()` + `crud.py` | LOG/EXTRACT → `crud.create` (new row). EDIT → `crud.update` (merge into JSONB sections). This is the only place AI results are written. |
-| 9 | Response | `schemas.py` → `CopilotResponse` | `{intent, message, complaint_id, complaint, patch?, risk_assessment?}` — `complaint` is always the full persisted record built from the row (`Complaint.model_validate(record)`). |
-| 10 | State | `frontend/src/store.js` → `settled` reducer | Replaces `complaint` and `patch` from the response and appends the reply (with its intent) and, if present, a risk card to the chat. `ComplaintForm.jsx` renders straight from `complaint`; fields present in `patch` get the "updated" highlight. |
-
-Where the boundaries are: the model only ever produces JSON (5); Pydantic decides what is valid (5, 6b);
-`merge.py` decides what may change (6b); `crud.py` decides what is stored (8). Failures are plain
-exceptions mapped to HTTP codes in `main.py` (`STATUS`), so no endpoint has a try/except.
-
-## Technology stack
-
-| Layer | Choice |
+| | |
 |---|---|
-| Frontend | React 19, Redux Toolkit 2, Tailwind CSS 4, Inter font (Vite 8) |
-| Backend | Python 3.12+, FastAPI, SQLAlchemy 2, Pydantic 2 |
-| AI | LangGraph 1.2, LangChain Groq 1.1, Groq (`gemma2-9b-it` configured → `openai/gpt-oss-20b` fallback) |
-| Documents | pypdf (text-based PDFs; OCR out of scope) |
-| Database | PostgreSQL 16 (JSONB), docker-compose for local dev |
+| **Identity** | Signed, HttpOnly session cookie (`SameSite=Lax`, `Secure` under `SECURE_COOKIES=true`). Visitors get an anonymous workspace automatically, so the demo needs no sign-up; register/login (bcrypt) attaches an email to a workspace. |
+| **Authorization** | Every record has an `owner_id` and every read and write filters on it *inside the query*. Another workspace's record is a `404`, so ids cannot be probed. The owner comes from the cookie, never the body. |
+| **CSRF** | State-changing requests must echo the session's token in `X-CSRF-Token`; the token is useless without the cookie. |
+| **Rate limits** | Model-backed endpoints and session creation are limited per principal and per address. In-process, so with several instances the allowance is per instance. |
+| **Input bounds** | Uploads bounded by bytes, pages, characters and wall-clock, with a per-page timeout in a worker thread, so a malformed PDF cannot hold a worker open. |
+| **Startup** | `ENVIRONMENT=production` refuses to start without a stable `SESSION_SECRET` and Secure cookies. |
+| **Telemetry** | Calls, retries, token counts, latency and error class only. Prompts, documents and model output are never recorded. |
 
-## Project structure
+Not implemented and not claimed: separation of duties between author and reviewer, tenant-level
+encryption, data-residency guarantees, or any GxP/GDPR compliance position.
 
+## Tests and CI
+
+| Suite | Count | What it covers |
+|---|---|---|
+| Backend (`pytest`) | **278** | Schema normalisation and rejection, EDIT patch safety, evidence labelling, auth and cross-workspace isolation, review concurrency, PDF limits, migrations, care checks, benchmark scoring, HTTP contract. 3 need PostgreSQL and are skipped without it — CI provides one. |
+| Frontend (`vitest`) | **17** | Session/CSRF handling in the API layer, Redux reducers and thunks. |
+| Browser (`playwright`) | **3** | A real Chromium against the built app served by the real API, with a real database, sessions and CSRF. |
+
+```bash
+cd backend && python -m pytest -q                    # 275 passed, 3 skipped without PostgreSQL
+cd frontend && npm test                              # 17 passed
+cd frontend && npm run e2e                           # builds, then 3 browser tests
 ```
-backend/
-  app/
-    main.py            FastAPI app, CORS, exception → HTTP mapping, /api/health
-    config.py          environment settings
-    db.py              engine / session
-    models.py          ComplaintRecord (JSONB per section)
-    schemas.py         canonical complaint schema + API models
-    merge.py           EDIT patch semantics
-    crud.py            create / get / update
-    documents.py       PDF validation + text extraction
-    api/complaints.py  /api/chat, /api/upload, /api/complaints
-    ai/graph.py        LangGraph wiring
-    ai/nodes.py        route, log, edit, extract, assess_risk
-    ai/prompts.py      prompts + schema-derived field guide
-    ai/llm.py          Groq client, structured output, retry, fallback
-  tests/               unit + API contract tests (SQLite, stubbed graph)
-  scripts/e2e.py       real Groq + PostgreSQL end-to-end check
-  requirements.txt · .env.example
-frontend/
-  src/
-    main.jsx           React root + Redux Provider
-    App.jsx            header (backend/model status), 60/40 layout
-    store.js           Redux Toolkit slice: complaint, patch, messages, busy; sendMessage / uploadDocument thunks
-    api.js             the three fetch calls (/api/chat, /api/upload, /api/health)
-    components/
-      ComplaintForm.jsx  read-only QMS form driven by the complaint record; highlights patched fields
-      RiskAssessment.jsx section 5: severity badge, reasoning, actions, follow-up, confidence
-      Copilot.jsx        chat history, intent chips, risk cards, input, PDF button + drag-and-drop
-  vite.config.js       React + Tailwind plugins; proxies /api to the backend in dev
-samples/               fictional demo complaint PDFs + generator
-screenshots/           captures of the running app (used above)
-docker-compose.yml     PostgreSQL 16 for local development
-Dockerfile · cloudbuild.yaml · DEPLOYMENT.md   single-container build (frontend served by FastAPI) and the Cloud Run + Neon deployment
-DEMO_SCRIPT.md · CODE_WALKTHROUGH.md · SUBMISSION_CHECKLIST.md
-```
+
+CI (`.github/workflows/ci.yml`) runs four jobs on every pull request: `backend` (against a real
+PostgreSQL 16 service), `frontend`, `e2e`, and `smoke`, which builds the Docker image, starts it
+the way the deployment does, and asserts that complaint and care data are closed to
+unauthenticated callers and that CSRF is enforced. **No secrets are used**, so the suite runs for
+pull requests from forks.
+
+### How the browser tests run without a provider key
+
+`backend/scripts/stub_groq.py` answers Groq's wire protocol with canned replies chosen by the
+requested response schema. The application is not modified and is not aware of it:
+`GROQ_BASE_URL` and `GROQ_API_BASE` point its real clients at the stub, so routing, validation,
+evidence, persistence, auth and the interface are all genuinely exercised — only the remote
+endpoint is replaced. The stub answers `400` to anything it has no canned reply for, so a test
+can never pass because the stub improvised. `E2E_REAL=1` runs the identical suite against the
+real Groq API, which is how the screenshots in this README are produced.
+
+It earned its keep on the first run: a documentation alert belonging to the note rather than to
+one observation produced an acknowledgement key of `...:null` in JavaScript and `...:None` in
+Python, so those alerts could never be cleared and a note containing an injected instruction
+could never be approved at all. The key is now built once, server-side.
 
 ## Setup
 
@@ -268,259 +331,171 @@ DEMO_SCRIPT.md · CODE_WALKTHROUGH.md · SUBMISSION_CHECKLIST.md
 docker compose up -d
 ```
 
-Starts PostgreSQL 16 on `localhost:5432` (user/password/db: `aivoa`). Any other PostgreSQL works —
-just set `DATABASE_URL`. Tables are created automatically on backend startup (no migrations needed
-for the MVP).
+PostgreSQL 16 on `localhost:5432` (user/password/db: `aivoa`). Any PostgreSQL works — set
+`DATABASE_URL`. The schema is owned by alembic and upgraded at startup; a failed upgrade leaves
+the service running in a reported degraded state rather than dead, and is retried.
 
-### 2. Environment variables
+### 2. Environment
 
-Copy `backend/.env.example` to `backend/.env` and fill in your key. Never commit `.env`.
+Copy `backend/.env.example` to `backend/.env`. Never commit it.
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | SQLAlchemy URL, e.g. `postgresql+psycopg://aivoa:aivoa@localhost:5432/aivoa` |
-| `GROQ_API_KEY` | Groq API key |
-| `GROQ_MODEL` | `gemma2-9b-it` (assignment default) |
-| `GROQ_FALLBACK_MODEL` | `openai/gpt-oss-20b` — current Groq model used if `GROQ_MODEL` is decommissioned (`openai/gpt-oss-120b` for the larger option) |
-| `GROQ_REASONING_EFFORT` | `low` (default) / `medium` / `high` — gpt-oss only; `low` is fastest and uses the fewest tokens |
-| `FRONTEND_URL` | CORS origin of the React dev server (`http://localhost:5173`) |
+| `DATABASE_URL` | e.g. `postgresql+psycopg://aivoa:aivoa@localhost:5432/aivoa`. Provider-style `postgres://` URLs are accepted as-is. |
+| `GROQ_API_KEY` | Groq API key. |
+| `GROQ_MODEL` / `GROQ_FALLBACK_MODEL` | See [Model configuration](#model-configuration). |
+| `GROQ_REASONING_EFFORT` | `low` (default) / `medium` / `high` — gpt-oss only. |
+| `SESSION_SECRET` | Signs the session cookie. Required for sessions to survive a restart or a second instance. |
+| `SECURE_COOKIES` | `true` when served over HTTPS. |
+| `FRONTEND_URL` | CORS origin of the dev server (`http://localhost:5173`). |
 
 ### 3. Backend
 
 ```bash
-cd backend
-python -m venv .venv
-.venv\Scripts\activate          # Windows   |   source .venv/bin/activate  # macOS/Linux
+cd backend && python -m venv .venv
+```
+
+Activate it (`.venv\Scripts\activate` on Windows, `source .venv/bin/activate` elsewhere), then:
+
+```bash
 pip install -r requirements.txt
+```
+
+```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-Interactive API docs: http://localhost:8000/docs
+API docs at <http://localhost:8000/docs>.
 
 ### 4. Frontend
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd frontend && npm install && npm run dev
 ```
 
-Open http://localhost:5173. The Vite dev server proxies `/api` to `http://localhost:8000`, so no
-frontend configuration is needed; for a production build set `VITE_API_URL` to the backend origin.
+<http://localhost:5173>; Vite proxies `/api` to port 8000.
 
-### Hosted deployment (what the live demo runs)
+### Deployment
 
-Google Cloud Run + Neon PostgreSQL, built from the repository `Dockerfile`. The exact commands,
-cost-safety settings (request-based billing, `min-instances 0`, `max-instances 3`, budget alert)
-and verification steps are in [DEPLOYMENT.md](DEPLOYMENT.md); `cloudbuild.yaml` wires a GitHub →
-Cloud Build → Cloud Run pipeline.
-
-The same image runs anywhere:
-
-```bash
-docker build -t aivoa-copilot .
-docker run -p 8000:8000 -e GROQ_API_KEY=... -e DATABASE_URL=postgresql://user:pass@host:5432/db aivoa-copilot
-```
-
-The image builds the React app and FastAPI serves it from `/`, so one URL is the whole product.
-`postgres://` / `postgresql://` URLs from hosting providers are accepted as-is (the psycopg driver
-is selected automatically) and SSL parameters such as `?sslmode=require` are preserved.
+`render.yaml` (free plan) and `cloudbuild.yaml` (Cloud Run + Neon) are both in the repository,
+and [DEPLOYMENT.md](DEPLOYMENT.md) has the commands, cost-safety settings and verification steps
+for each. The same image runs anywhere: the React build is served by FastAPI, so one origin is
+the whole product and the browser needs no configuration.
 
 ## API
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/chat` | Natural-language message → LOG or EDIT |
-| `POST` | `/api/upload` | `multipart/form-data` PDF → EXTRACT |
-| `GET` | `/api/complaints` | Recent complaints |
-| `GET` | `/api/complaints/{id}` | One complaint |
-| `GET` | `/api/health` | DB status, Groq configuration, active model |
+| `POST` | `/api/auth/anonymous` | Start a workspace; returns the CSRF token |
+| `POST` | `/api/auth/register` · `/api/auth/login` · `/api/auth/logout` | Attach an account to a workspace |
+| `GET` | `/api/auth/me` | Current principal |
+| `POST` | `/api/chat` | Message → LOG or EDIT |
+| `POST` | `/api/upload` | PDF → EXTRACT |
+| `GET` | `/api/complaints` · `/api/complaints/{id}` | Owner-scoped list / one record |
+| `POST` | `/api/complaints/{id}/approve` · `/reject` | Review decision (revision-guarded) |
+| `GET` | `/api/complaints/{id}/history` | Audit trail |
+| `GET` | `/api/complaints/{id}/export` | Mock export; approved records only |
+| `POST` | `/api/care` | Analyse a caregiver note |
+| `GET` | `/api/care` · `/api/care/{id}` · `/history` · `/export` | Care records, audit, export |
+| `POST` | `/api/care/{id}/approve` · `/reject` | Care review decision |
+| `GET` | `/api/health` | Liveness; always 200, body reports database, schema and model state |
+| `GET` | `/api/ready` | Readiness; 503 until the service can actually serve |
 
-### LOG
+<details>
+<summary>Example: LOG, then an EDIT that changes exactly one field</summary>
 
 ```bash
-curl -X POST http://localhost:8000/api/chat -H "Content-Type: application/json" -d '{
-  "message": "Customer Rahul Sharma reported that Paracetamol 500 mg tablets from batch PCM24031 were chipped and broken inside the blister pack. The complaint was received today. No hospitalization occurred and the sample is available.",
-  "complaint_id": null
+curl -sX POST localhost:8000/api/auth/anonymous -c jar            # → {"csrf_token": "..."}
+
+curl -sX POST localhost:8000/api/chat -b jar -H "X-CSRF-Token: $CSRF" \
+  -H "Content-Type: application/json" -d '{
+  "message": "Customer Rahul Sharma reported that Paracetamol 500 mg tablets from batch PCM24031 were chipped and broken inside the blister pack. The complaint was received today. No hospitalization occurred and the sample is available."
 }'
 ```
 
 ```json
 {
   "intent": "LOG",
-  "message": "Logged a new complaint for Paracetamol 500 mg tablets · batch PCM24031 · reported by Rahul Sharma. Captured 9 of 31 fields. Still missing: email, phone, organization, country, contact channel… — tell me if you have them.",
+  "message": "Logged a new complaint for Paracetamol 500 mg tablets · batch PCM24031 · reported by Rahul Sharma. Captured 16 of 30 fields. Still missing: email, phone, organization…",
   "complaint_id": 1,
-  "complaint": { "id": 1, "reference": "CC-2026-0001", "complainant": {...}, "product": {...}, "complaint": {...}, "patient": {...}, "risk_assessment": {...} },
-  "patch": null,
-  "risk_assessment": { "severity_class": "III", "severity_reason": "...", "immediate_actions": ["..."], "recommended_follow_up": ["..."], "confidence": 0.8, "disclaimer": "AI-assisted preliminary triage ..." }
+  "complaint": {
+    "reference": "CC-2026-0001", "status": "needs_review", "revision": 1,
+    "product": { "batch_number": "PCM24031", "...": "..." },
+    "evidence": { "product.batch_number": { "status": "verbatim", "excerpt": "from batch PCM24031 were chipped" } },
+    "risk_assessment": { "severity_class": "III", "confidence": 0.8, "...": "..." }
+  }
 }
 ```
 
-### EDIT
-
 ```bash
-curl -X POST http://localhost:8000/api/chat -H "Content-Type: application/json" -d '{
-  "message": "Actually change the batch number to PCM24099.",
-  "complaint_id": 1
-}'
+curl -sX POST localhost:8000/api/chat -b jar -H "X-CSRF-Token: $CSRF" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Actually change the batch number to PCM24099.", "complaint_id": 1}'
 ```
 
 ```json
 {
   "intent": "EDIT",
   "message": "Updated batch number: PCM24031 → PCM24099.",
-  "complaint_id": 1,
   "patch": { "product": { "batch_number": "PCM24099" } },
-  "complaint": { ...full record with only batch_number changed... },
-  "risk_assessment": null
+  "complaint": { "revision": 2, "status": "needs_review", "...": "everything else unchanged" }
 }
 ```
+</details>
 
-`risk_assessment` is non-null on an EDIT only when the edit changed complaint/patient facts and a
-new assessment was generated; the current assessment is always available in `complaint.risk_assessment`.
-
-### EXTRACT
-
-```bash
-curl -X POST http://localhost:8000/api/upload -F "file=@samples/complaint_02_adverse_event.pdf"
-```
-
-```json
-{
-  "intent": "EXTRACT",
-  "message": "Extracted a complaint from the document for Amoxiclav-DS Tablets · batch AMC25017 · reported by Dr. Priya Menon. Captured 27 of 31 fields. ...",
-  "complaint_id": 2,
-  "complaint": { ... },
-  "risk_assessment": { "severity_class": "I", ... }
-}
-```
-
-### Errors
+### Error contract
 
 | Situation | Status |
 |---|---|
-| EDIT request with no `complaint_id` | `400` |
-| Empty / corrupt / image-only / non-PDF upload | `400` (`415` for a non-`.pdf` filename) |
-| Unknown `complaint_id` | `404` |
-| Message contained no complaint information, or edit mapped to no field | `422` |
-| Model returned malformed data twice / Groq error | `502` |
-| `GROQ_API_KEY` missing / database down | `503` |
+| No session / CSRF token missing or wrong | `401` / `403` |
+| EDIT with no `complaint_id`; empty, corrupt or image-only PDF | `400` (`415` for a non-PDF filename) |
+| Unknown or other-workspace id | `404` |
+| Record changed since you read it (review race) | `409` |
+| Nothing extractable; unsupported values not acknowledged | `422` |
+| Malformed model output twice, or a Groq error | `502` |
+| `GROQ_API_KEY` missing, or the database is down | `503` |
 
 Responses always carry a human-readable `detail`; stack traces are never returned.
 
-## Security model
+## Limitations
 
-- **Identity**: a signed, HttpOnly session cookie (`SameSite=Lax`, `Secure` when
-  `SECURE_COOKIES=true`). A visitor is given an anonymous workspace automatically, so the demo
-  needs no sign-up; `POST /api/auth/register` and `/login` attach an email and password (bcrypt)
-  to a workspace so it can be reached again.
-- **Authorization**: every complaint has an `owner_id`, and every read and write filters on it
-  inside the query. Another workspace's record returns `404`, so ids cannot be probed. The owner
-  comes from the session cookie and never from the request body.
-- **CSRF**: state-changing requests must echo the session's CSRF token in `X-CSRF-Token`; the
-  token alone is useless without the cookie.
-- **Rate limits**: the model-backed endpoints and session creation are limited per principal and
-  per client address. The limiter is in process memory, so with several instances the effective
-  allowance is per instance.
-- **Schema**: alembic owns the schema (`app/migrate.py` runs `upgrade head` at startup); the
-  application no longer calls `create_all()`. Ownership was added additively, so rows written
-  before it keep their data and belong to nobody rather than being assigned to an account.
+- Text-based PDFs only. Scanned documents need OCR, which is out of scope.
+- One model, one provider, one prompt. The benchmark says nothing about any other configuration,
+  and 43 synthetic cases written by the author of the checks probe known failure modes rather
+  than sampling real documentation.
+- Negation handling is the weakest measured behaviour (1 failure in 5 opportunities).
+- Rate limiting is in-process, so it is per instance rather than global.
+- The risk assessment cannot be edited through chat; it is regenerated when the facts it depends
+  on change.
+- Free-tier Groq keys cap `gpt-oss-20b` at roughly 8k tokens/minute, and a LOG costs ~3.5k
+  tokens across three calls. Bursts return 429s, which the SDK retries with backoff, so rapid
+  requests get slower rather than failing.
+- The hosted demo is not currently serving (see [above](#running-it-yourself)).
 
-Not implemented, and not claimed: separation of duties between author and reviewer, audit
-trails, tenant-level encryption, or any GDPR/GxP compliance position. Hosting region and data
-residency are whatever the deployment target provides and have not been assessed.
+## Repository
 
-## Data model
-
-One canonical schema (`schemas.py`) is used everywhere:
-
-- `ComplaintData` — the four AI-populated sections: `complainant`, `product`, `complaint`,
-  `patient`. Every field is optional and `null` when unknown. This is the LOG/EXTRACT
-  structured-output type.
-- `ComplaintPatch` / `EditProposal` — the same sections, used as the EDIT structured-output type
-  (unset fields are excluded when dumping, so only proposed changes survive).
-- `RiskAssessment` — `severity_class` (`I`/`II`/`III`), `severity_reason`, `immediate_actions`,
-  `recommended_follow_up`, `confidence` (0–1), plus a fixed `disclaimer`.
-- `Complaint` — `ComplaintData` + `id`, `reference` (`CC-YYYY-NNNN`), `source`,
-  `risk_assessment`, timestamps. This is the API response type and is built directly from the
-  SQLAlchemy row.
-- `ComplaintRecord` (SQLAlchemy) stores each section as a JSONB column named exactly like the
-  schema section, so rows round-trip through `Complaint.model_validate(record)` with no mapping code.
-
-## Risk assessment behaviour
-
-Class I = potential for serious health consequences; Class II = temporary/reversible effects or
-significant quality defect; Class III = unlikely to cause harm (cosmetic/minor). The prompt asks
-the model to consider defect type, patient involvement, adverse events, hospitalisation/death,
-counterfeit suspicion, sterile products and sample availability, to lower confidence when facts
-are missing, and to cite no regulations. Every assessment carries a fixed disclaimer and the UI
-labels it "AI-Assisted Risk Assessment".
-
-## Tests
-
-```bash
-cd backend
-.venv\Scripts\python -m pytest -q          # 179 tests; no network and no credentials needed
-
-PostgreSQL-specific migration tests run when a disposable database is available:
-
-```bash
-docker run -d --name pg -e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=test -p 55432:5432 postgres:16-alpine
-TEST_POSTGRES_URL=postgresql+psycopg://test:test@localhost:55432/test .venv\Scripts\python -m pytest -q
+```
+backend/app/        schemas · merge · evidence · crud · auth · documents · migrate
+backend/app/ai/     graph · nodes · prompts · llm
+backend/app/api/    complaints · care · auth
+backend/app/care/   schemas · checks · extract        the reliability lab
+backend/alembic/    migrations 0001–0004
+backend/eval/       43-case benchmark, scorer, committed run reports
+backend/scripts/    stub_groq.py (CI) · e2e.py (real provider) · probe_models.py
+backend/tests/      278 tests
+frontend/src/       App · store · api · components/{ComplaintForm,Copilot,RiskAssessment,ReviewPanel,CareLab}
+frontend/e2e/       browser tests; screenshots are a by-product of the real-provider run
+samples/            fictional complaint PDFs + their generator
 ```
 
-Frontend:
+| Document | What is in it |
+|---|---|
+| [EVALUATION.md](EVALUATION.md) | Benchmark methodology, denominators, failure analysis, honest limits |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Render and Cloud Run deployment, cost safety, restoring the demo |
+| [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md) | One request end to end, file by file |
+| [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | A 2–3 minute product demo |
+| [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | Phase-by-phase state, including what is blocked and why |
 
-```bash
-cd frontend
-npm test          # 13 tests (session/CSRF handling, Redux slice)
-npm run build
-```
+## Licence
 
-Every one of these runs in CI (`.github/workflows/ci.yml`) on each pull request, together with a
-smoke test that builds the image, starts it, and checks that complaint data is closed to
-unauthenticated callers
-.venv\Scripts\python scripts/probe_models.py   # which models this key can use + one JSON-mode call
-.venv\Scripts\python scripts/e2e.py            # real Groq + PostgreSQL run against http://localhost:8000
-```
-
-`tests/` cover authentication and cross-workspace isolation, migrations, PDF limits,
-schema normalisation/rejection, EDIT patch safety (single/nested/multiple fields,
-nulls never erase data, explicit clear only), PDF validation and the HTTP contract (SQLite with a
-stubbed graph). `scripts/e2e.py` runs LOG → EDIT → nested EDIT → EXTRACT plus the error paths
-against the live stack and asserts that unrelated fields are untouched by edits.
-
-## Demo flow
-
-Recording scripts: [DEMO_SCRIPT.md](DEMO_SCRIPT.md) (product demo) and
-[CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md) (technical walkthrough).
-
-1. Open the app — empty form, co-pilot ready ("Try a sample complaint" fills the message below).
-2. Paste the Paracetamol complaint above → form fills, risk assessment appears (Class III).
-3. "Actually change the batch number to PCM24099." → only that field changes; reply names the change.
-4. "The complainant's email is rahul@example.com" → nested field updated, everything else intact.
-5. Upload `samples/complaint_02_adverse_event.pdf` → new complaint extracted from the document,
-   hospitalisation captured, Class I/II assessment.
-6. `samples/complaint_03_api_foreign_particles.pdf` shows a B2B API (active ingredient) complaint.
-
-## Sample data
-
-`samples/` contains three fictional PDFs (all names, companies and identifiers are invented) and
-`generate_samples.py` to regenerate them:
-
-- `complaint_01_blister_defect.pdf` — pharmacy email, chipped tablets, no patient harm
-- `complaint_02_adverse_event.pdf` — hospital complaint form, discoloured tablets, patient hospitalised
-- `complaint_03_api_foreign_particles.pdf` — formulation customer reports particles in an API batch
-
-## Known limitations
-
-- Text-based PDFs only; scanned documents need OCR, which is out of scope.
-- One complaint is edited at a time; there is no authentication, audit trail or workflow states.
-- `gemma2-9b-it` (and the llama-3.x alternatives) have been shut down by Groq; the fallback model is used whenever Groq rejects the configured one, and `/api/health` says so.
-- Small models occasionally miss a field; the co-pilot reports missing fields so they can be added by chat.
-- Clearing a field requires an explicit request ("remove the phone number"); model-emitted nulls are ignored by design.
-- The AI risk assessment (severity class etc.) is not editable through chat; it is regenerated when complaint or patient facts change.
-- The risk assessment is advisory and must be reviewed by the quality unit.
-- Free-tier Groq keys are limited to ~8k tokens/minute on `gpt-oss-20b`; a LOG costs ~3.5k tokens
-  (router + extraction + risk). Bursts return 429s, which the Groq SDK retries with back-off
-  (`max_retries=5`), so rapid-fire requests get slower rather than failing.
+[Apache 2.0](LICENSE). All sample data, residents and complaints are fictional.
