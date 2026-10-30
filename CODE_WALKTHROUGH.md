@@ -97,3 +97,21 @@ with a diagram if you want it on screen.
   `complaint.risk_assessment`; `Copilot` renders `messages`.
 - Close: the model only ever produces JSON; Pydantic decides what is valid; `merge.py` decides what may change;
   `crud.py` decides what is stored; the UI only reflects what the server persisted.
+
+## 11. What sits on top of that pipeline (60 s) — `evidence.py`, `crud.py`, `care/`
+
+The ten steps above are the assignment's pipeline. Three layers were built on top of it, and
+each is worth a sentence if there is time:
+
+- `evidence.py` searches the source text for every value the model produced and labels it
+  `verbatim`, `normalized`, `derived` or `unsupported`, with the excerpt and page. A match
+  proves the characters are in the source, not that the reading is right — which is exactly the
+  limitation the adversarial benchmark cases exploit.
+- Review (`crud.review`, `components/ReviewPanel.jsx`): a record is a suggestion
+  until a person approves it, approval is blocked until unsupported values are acknowledged, and
+  the decision is one conditional `UPDATE` guarded by owner, revision and status, so two
+  reviewers racing cannot both win. Editing an approved record sends it back for review.
+- `care/` is a second case study on caregiver notes: one model call, then deterministic checks
+  for attribution, negation, contradiction, care-plan gaps and instructions injected into the
+  note. `EVALUATION.md` has the measured results, including the model obeying two of four
+  injections while the application contained four of four.
