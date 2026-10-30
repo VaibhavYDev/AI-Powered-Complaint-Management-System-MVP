@@ -3,20 +3,20 @@
 Updated at meaningful checkpoints so the work can be resumed without repeating the audit.
 States: NOT STARTED · IN PROGRESS · VERIFIED · BLOCKED (EXTERNAL) · FAILED
 
-Checkpoint: release validation complete on `feat/review-ui-and-care-lab` @ `1d5b142`.
-Everything that does not need GitHub write access is done.
+Released. PR #4 is merged, `main` is `e6a0302`, and that exact revision is deployed and
+verified on the public service.
 
 | Phase | State | Evidence |
 |---|---|---|
-| 0 Live deployment | VERIFIED (for the revision on `main`) | <https://ai-powered-complaint-management-system-ky8u.onrender.com> serves, `/api/health` is `ready`, `/api/ready` is 200, and 47 checks pass against the public URL |
+| 0 Live deployment | VERIFIED | <https://ai-powered-complaint-management-system-ky8u.onrender.com> reports `revision: e6a0302…`, `status: ready`, `schema: ready`; `/api/ready` is 200 |
 | 1 Security & correctness | VERIFIED | Merged in PR #1; cross-session isolation re-verified against the live service |
 | 2 Evidence & human review | VERIFIED | Backend and reviewer UI; the whole workflow is asserted by a browser test on every pull request |
 | 3 Care Documentation Reliability Lab | VERIFIED | Backend, deterministic checks and UI; injection containment asserted in a browser test |
 | 4 Real-model evaluation | VERIFIED | Three runs against `openai/gpt-oss-20b`; published metrics re-derived from the stored predictions by a test |
 | 5 Provider reliability & observability | VERIFIED | Bounded timeout and retries per inference; privacy-safe telemetry. A provider abstraction was **deliberately not added** — see below |
-| 6 QA & CI | VERIFIED | Four GitHub Actions jobs green on `1d5b142`: `backend`, `frontend`, `e2e`, `smoke` |
+| 6 QA & CI | VERIFIED | Four GitHub Actions jobs green on the merge commit `e6a0302`: `backend`, `frontend`, `e2e`, `smoke` |
 | 7 README presentation | VERIFIED | Live URL, real screenshots, measured results, accurate counts; every Markdown link and anchor checked |
-| 8 Integration & deployment | BLOCKED (EXTERNAL) | PR #4 is `mergeable: clean` with all checks green, but it is a draft and this session has no GitHub write access |
+| 8 Integration & deployment | VERIFIED | PR #4 merged (20 commits, 61 files); Render auto-deployed the merge; the repository Website field points at the demo |
 
 ## Verified on the release code
 
@@ -30,23 +30,22 @@ Everything that does not need GitHub write access is done.
   connection dropped, with the remaining four re-run separately against it and passing.
 - Migrations `0001 → 0002 → 0003 → 0004`, a single linear chain.
 
-## What remains, and exactly who can do it
+## Verified against the public service after the release
 
-**1. Merge PR #4** — <https://github.com/VaibhavYDev/AI-Powered-Complaint-Management-System-MVP/pull/4>
+With real Groq inference and the production PostgreSQL database, on the deployed `e6a0302`:
 
-It is `mergeable: true`, `mergeable_state: clean`, head `1d5b142`, all four checks green. Two
-clicks in the GitHub UI: **Ready for review**, then **Merge pull request**. This session has no
-authenticated GitHub write path — `gh` is not installed, the GitHub connector is not authorised,
-and reading the stored git credential was denied — so the merge cannot be made from here, and
-faking it was not an option.
-
-**2. Let Render deploy the merge.** The service builds from `main`. With auto-deploy on the
-merge is the deployment; otherwise **Manual Deploy → Deploy latest commit**. Afterwards
-`/api/health` should still report `status: ready`, and the reviewer interface and the Care Lab
-reach the demo for the first time.
-
-**3. Set the repository Website field** to the Render URL: repository home → **About** (the gear
-beside it) → **Website** → paste the URL → **Save changes**.
+- a complaint logged from one sentence, with provenance on every extracted field;
+- approval refused while a value was unsupported, allowed once acknowledged;
+- export refused before approval (`409`) and allowed after it;
+- a stale revision refused (`409`);
+- an edit changing only the field it named, and sending the approved record back to review at a
+  new revision, with the audit trail showing extracted → approved → edited;
+- the Care Lab reading a two-resident note, the model obeying an instruction addressed to the
+  reader, and the application raising it as two high-priority alerts that blocked approval until
+  acknowledged, then exporting;
+- every documented error path (`400`, `401`, `403`, `404`, `409`, `415`, `422`);
+- a second session unable to read or list the first session's records;
+- a Groq free-tier `429` surfacing as a clean provider error rather than a crash.
 
 ## Known divergence in the deployed configuration
 

@@ -18,9 +18,12 @@ where it matters.
       and none of them are tracked (109 tracked files, all intentional)
 - [x] Demo PDFs committed (`samples/complaint_01..03*.pdf`) with the generator that made them
 - [x] No resume, database file or personal document committed
-- [x] **Live demo** — <https://ai-powered-complaint-management-system-ky8u.onrender.com> answers
-      `/api/health` with `status: ready`, `database: ok`, `schema: ready`, and `/api/ready` 200.
-      See [DEPLOYMENT.md](DEPLOYMENT.md).
+- [x] **Live demo** — <https://ai-powered-complaint-management-system-ky8u.onrender.com> runs the
+      released revision `e6a0302` and reports `status: ready`, `database: ok`, `schema: ready`;
+      `/api/ready` is 200. The whole workflow, including review and the Care Lab, was exercised
+      against it. See [DEPLOYMENT.md](DEPLOYMENT.md).
+- [x] Repository **Website** field points at the live demo
+- [x] Release merged: PR #4, 20 commits into `main`, all four CI jobs green on the merge commit
 
 ## Verification
 

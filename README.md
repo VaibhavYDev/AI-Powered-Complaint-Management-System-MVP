@@ -55,13 +55,14 @@ origin. PostgreSQL is the real target (see [Setup](#setup)); SQLite is enough to
 free tier, so the first request after an idle period takes a minute or so to wake the instance.
 `/api/health` reports the real database, schema and model state.
 
-Verified against that public URL on 2026-10-30, with real Groq inference and real PostgreSQL —
-47 checks: session and CSRF enforcement, a complaint logged from one sentence, a partial edit
-that changed only the batch number, nested and multi-field edits, an explicit clear, a risk
-re-assessment after the patient facts changed, extraction from a PDF, every documented error
-path, and one session being unable to read or list another's records. The reviewer interface
-and the Care Documentation Reliability Lab are part of this release and reach the demo with the
-deployment that follows it. See [DEPLOYMENT.md](DEPLOYMENT.md).
+The whole of it was verified against that public URL on 2026-10-30, with real Groq inference and
+a real PostgreSQL database: a complaint logged from one sentence, provenance on every field, an
+edit that changed only the batch number, nested and multi-field edits, an explicit clear, a risk
+re-assessment after the patient facts changed, extraction from a PDF, approval blocked until an
+unsupported value was acknowledged, export blocked until approval, an edit sending an approved
+record back to review, the Care Lab catching a finding the model took from an instruction in the
+note, every documented error path, and one session being unable to read or list another's
+records. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
