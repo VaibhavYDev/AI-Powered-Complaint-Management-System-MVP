@@ -52,10 +52,16 @@ Then open <http://localhost:8000>. One image contains the built React app and th
 origin. PostgreSQL is the real target (see [Setup](#setup)); SQLite is enough to look around.
 
 **[Live demo](https://ai-powered-complaint-management-system-ky8u.onrender.com)** — on Render's
-free tier, so the first request after a period of inactivity takes a minute or so to wake the
-instance. `/api/health` reports the real database, schema and model state. The reviewer
-interface and the Care Documentation Reliability Lab reach the demo with the deployment that
-follows this branch being merged. See [DEPLOYMENT.md](DEPLOYMENT.md).
+free tier, so the first request after an idle period takes a minute or so to wake the instance.
+`/api/health` reports the real database, schema and model state.
+
+Verified against that public URL on 2026-10-30, with real Groq inference and real PostgreSQL —
+47 checks: session and CSRF enforcement, a complaint logged from one sentence, a partial edit
+that changed only the batch number, nested and multi-field edits, an explicit clear, a risk
+re-assessment after the patient facts changed, extraction from a PDF, every documented error
+path, and one session being unable to read or list another's records. The reviewer interface
+and the Care Documentation Reliability Lab are part of this release and reach the demo with the
+deployment that follows it. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
@@ -473,7 +479,12 @@ Responses always carry a human-readable `detail`; stack traces are never returne
 - Free-tier Groq keys cap `gpt-oss-20b` at roughly 8k tokens/minute, and a LOG costs ~3.5k
   tokens across three calls. Bursts return 429s, which the SDK retries with backoff, so rapid
   requests get slower rather than failing.
-- The hosted demo is not currently serving (see [above](#running-it-yourself)).
+- The demo runs on a free instance that sleeps when idle, so the first request after a quiet
+  period is slow. Its rate limiting is per instance, and anyone who opens it gets their own
+  anonymous workspace rather than a shared one.
+- Resident attribution still fails on roughly one observation per benchmark run, and the model
+  obeys two of the four prompt injections — the application contains all four, but the
+  extraction itself is wrong in those cases.
 
 ## Repository
 
