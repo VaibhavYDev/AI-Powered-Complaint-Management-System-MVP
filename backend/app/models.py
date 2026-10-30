@@ -67,5 +67,43 @@ class ComplaintEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class CareRecord(Base):
+    """Care Documentation Reliability Lab. Synthetic residents only; same review gate as a
+    complaint: a suggestion until a person approves it."""
+
+    __tablename__ = "care_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="needs_review", server_default="needs_review")
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    care_plan: Mapped[list | None] = mapped_column(JsonColumn, nullable=True)
+    note: Mapped[dict] = mapped_column(JsonColumn, default=dict)
+    evidence: Mapped[dict | None] = mapped_column(JsonColumn, nullable=True)
+    alerts: Mapped[list | None] = mapped_column(JsonColumn, nullable=True)
+    acknowledged: Mapped[list | None] = mapped_column(JsonColumn, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CareEvent(Base):
+    __tablename__ = "care_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    care_id: Mapped[int] = mapped_column(ForeignKey("care_records.id"))
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(32))
+    revision: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 Index("ix_complaints_owner", ComplaintRecord.owner_id)
+Index("ix_care_records_owner", CareRecord.owner_id)
+Index("ix_care_events_record", CareEvent.care_id)
 Index("ix_complaint_events_complaint", ComplaintEvent.complaint_id)
