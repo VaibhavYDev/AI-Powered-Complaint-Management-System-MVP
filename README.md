@@ -1,5 +1,7 @@
 # AIVOA Complaint Co-pilot
 
+**[Launch live demo](https://ai-powered-complaint-management-system-ky8u.onrender.com)** · [Deployment health](https://ai-powered-complaint-management-system-ky8u.onrender.com/api/health)
+
 AI-powered Customer Complaint intake for a pharmaceutical Quality Management System (QMS).
 Built for the AIVOA "AI Product Engineer (Interns)" Round 1 assignment.
 
@@ -12,18 +14,16 @@ risk assessment. The form on the left is a live view of that structured state.
 > claim of regulatory compliance. The risk assessment is an AI-assisted triage aid for a human
 > reviewer, not a regulatory determination.
 
-## Hosted demo
+## Live demo
 
-**https://aivoa-complaint-copilot.onrender.com** — Render free plan, so the service sleeps after
-15 minutes of inactivity and the first visit takes about a minute to wake. It is not always-on.
+**[Open the AI-Powered Complaint Management System](https://ai-powered-complaint-management-system-ky8u.onrender.com)**
 
-The deployment is a single container: the React build is served by FastAPI, so the UI and the
-`/api` endpoints share one origin and the browser needs no backend configuration. `render.yaml`
-is the blueprint; `GET /api/health` reports database, schema and model state, and `/api/ready`
-returns 503 until the service can actually serve.
+Deployed on Render's free tier. The service may sleep after inactivity, so the first request
+can take a minute or longer. The Render deployment reports **Live** and completed database
+migrations at commit `d68afdd`; the full end-to-end public workflow still needs verification.
 
-If the link is unresponsive the service needs a sync in the Render dashboard — see
-[DEPLOYMENT.md](DEPLOYMENT.md#restoring-the-render-service).
+The deployment is a single container: React is served by FastAPI and shares its origin with
+the `/api` endpoints. [Deployment and troubleshooting](DEPLOYMENT.md).
 
 ## Screenshots
 
