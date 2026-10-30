@@ -195,3 +195,29 @@ def test_the_same_resident_written_two_ways_still_contradicts_itself():
     )
     _, alerts = analyse(extracted, NOTE, PLAN)
     assert "contradiction" in kinds(alerts)
+
+
+def test_a_negation_in_the_previous_sentence_is_not_borrowed():
+    """A real run flagged Josef Brandt's mobility entry because the sentence before it, about a
+    different resident, said 'No pain reported.'"""
+    extracted = note(
+        residents=["Frau Anna Keller", "Herr Josef Brandt"],
+        observations=[
+            {
+                "category": "mobility",
+                "finding": "walked to the dining room with a frame",
+                "resident": "Herr Josef Brandt",
+            }
+        ],
+    )
+    _, alerts = analyse(extracted, NOTE, [])
+    assert "possible_negation" not in kinds(alerts)
+
+
+def test_a_negation_in_the_same_sentence_is_still_caught():
+    extracted = note(
+        residents=["Herr Josef Brandt"],
+        observations=[{"category": "pain", "finding": "pain reported", "resident": "Herr Josef Brandt"}],
+    )
+    _, alerts = analyse(extracted, NOTE, [])
+    assert "possible_negation" in kinds(alerts)

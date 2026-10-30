@@ -99,4 +99,64 @@ const copilot = createSlice({
 
 export const { reset } = copilot.actions;
 
-export const store = configureStore({ reducer: { copilot: copilot.reducer } });
+export const analyseNote = createAsyncThunk("care/analyse", async ({ note, carePlan }, { rejectWithValue }) => {
+  try {
+    return await api.analyseNote(note, carePlan);
+  } catch (err) {
+    return rejectWithValue(err.message);
+  }
+});
+
+export const decideCare = createAsyncThunk(
+  "care/decide",
+  async ({ action, acknowledged, note }, { getState, rejectWithValue }) => {
+    const { record } = getState().care;
+    try {
+      const updated = await api.decideCare(record.id, action, record.revision, acknowledged, note);
+      return { record: updated, events: await api.careHistory(record.id) };
+    } catch (err) {
+      return rejectWithValue(err.message);
+    }
+  },
+);
+
+const care = createSlice({
+  name: "care",
+  initialState: { record: null, events: [], busy: false, error: null },
+  reducers: {
+    clear: (state) => {
+      state.record = null;
+      state.events = [];
+      state.error = null;
+    },
+  },
+  extraReducers: (builder) => {
+    const working = (state) => {
+      state.busy = true;
+      state.error = null;
+    };
+    const failed = (state, { payload, error }) => {
+      state.busy = false;
+      state.error = payload ?? error.message;
+    };
+    builder
+      .addCase(analyseNote.pending, working)
+      .addCase(analyseNote.fulfilled, (state, { payload }) => {
+        state.busy = false;
+        state.record = payload;
+        state.events = [];
+      })
+      .addCase(analyseNote.rejected, failed)
+      .addCase(decideCare.pending, working)
+      .addCase(decideCare.fulfilled, (state, { payload }) => {
+        state.busy = false;
+        state.record = payload.record;
+        state.events = payload.events;
+      })
+      .addCase(decideCare.rejected, failed);
+  },
+});
+
+export const { clear: clearCare } = care.actions;
+
+export const store = configureStore({ reducer: { copilot: copilot.reducer, care: care.reducer } });

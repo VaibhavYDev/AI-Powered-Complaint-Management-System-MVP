@@ -8,7 +8,7 @@ States: NOT STARTED · IN PROGRESS · VERIFIED · BLOCKED (EXTERNAL) · FAILED
 | 0 Live deployment | BLOCKED (EXTERNAL) | Code-side work done and verified; Render sync needs dashboard access |
 | 1 Security & correctness | VERIFIED | Merged in PR #1; 211 backend tests green on `main` (CI run on `d68afdd` succeeded) |
 | 2 Evidence & human review | VERIFIED | Backend + reviewer UI work together; full workflow exercised in a browser (extract -> flagged unsupported value -> acknowledge -> approve -> export -> edit revokes approval at revision 2) |
-| 3 Care Documentation Reliability Lab | NOT STARTED | |
+| 3 Care Documentation Reliability Lab | VERIFIED | Backend, checks and UI; verified in a browser with the real model on a synthetic German and English note: 3 observations attributed to 2 residents, the wound-versus-care-plan gap raised, approve and mock export |
 | 4 Real-model evaluation | NOT STARTED | |
 | 5 Provider reliability & observability | NOT STARTED | |
 | 6 QA & CI | IN PROGRESS | CI green on `main`; browser E2E outstanding |
@@ -53,16 +53,18 @@ from here.
 
 Branch `feat/review-ui-and-care-lab`, based on `main` (`d68afdd`).
 
-Phase 2 is complete. Verified in a real browser against a live backend and the real model:
-per-field evidence badges (quoted / matched / inferred / not in source / you set with excerpt and
-page in the tooltip), the unsupported-value panel with its acknowledgment gate, approve and
-reject with reviewer notes, revision-conflict errors, audit history, source text, and the
-approved-only mock export. Editing an approved record returned it to `needs_review` at revision 2
-and the export button disappeared.
+Phases 2 and 3 are complete and verified in a browser against the real model
+(`openai/gpt-oss-20b`).
+
+Two defects found by real runs rather than by tests, both fixed with regression tests:
+- resident names were compared with honorifics attached, so a note saying "Frau Anna Keller"
+  did not match a care plan saying "Anna Keller" and produced false documentation gaps;
+- the negation check read backwards past the end of a sentence, so "No pain reported." for one
+  resident flagged the next resident's mobility entry.
 
 Next, in order:
-1. Phase 3 Care Documentation Reliability Lab.
-2. Phase 4 benchmark and real-model evaluation (a working Groq key is in `backend/.env`; the
-   model actually served is `openai/gpt-oss-20b`, since `gemma2-9b-it` is retired).
-3. Phase 5 provider reliability and telemetry, Phase 6 browser/E2E coverage, Phase 7 README.
+1. Phase 4 benchmark and real-model evaluation. A working Groq key is in `backend/.env`; the
+   model actually served is `openai/gpt-oss-20b` because `gemma2-9b-it` is retired.
+2. Phase 5 provider reliability and telemetry.
+3. Phase 6 remaining QA, Phase 7 README.
 4. Phase 8 deployment, once the Render sync below is done.

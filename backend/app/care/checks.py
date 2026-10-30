@@ -16,6 +16,8 @@ from .schemas import Alert, CareNote, CarePlanEntry, Observation
 JUDGED_FIELDS = {"category", "severity", "follow_up_required"}
 NEGATORS = re.compile(r"\b(no|denies|without|kein|keine|ohne|nicht)\b", re.IGNORECASE)
 # Notes and care plans disagree about honorifics, so names are compared without them.
+# A negator only applies inside its own sentence.
+SENTENCE_END = re.compile(r"[.!?;]")
 HONORIFICS = re.compile(r"^(frau|herr|mr|mrs|ms|miss|dr|prof)\.?\s+", re.IGNORECASE)
 
 
@@ -136,7 +138,9 @@ def _negated_findings(note: CareNote, evidence: dict, source: str) -> list[Alert
         if not excerpt:
             continue
         before = excerpt.split(observation.finding)[0] if observation.finding in excerpt else excerpt
-        if NEGATORS.search(before[-40:]):
+        # Only the sentence the finding sits in can negate it. Without this the preceding
+        # sentence - often about a different resident - supplies a negator that is not theirs.
+        if NEGATORS.search(SENTENCE_END.split(before)[-1]):
             alerts.append(
                 Alert(
                     kind="possible_negation",
