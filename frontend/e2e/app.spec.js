@@ -49,7 +49,7 @@ test("a complaint is logged, corrected and approved entirely through the co-pilo
   const risk = page.locator("fieldset").filter({ hasText: "5. AI-Assisted Risk Assessment" });
   await expect(risk.getByText(/Class (I|II|III) · /)).toBeVisible();
   await expect(risk.getByText(/AI confidence/)).toBeVisible();
-  await expect(risk.getByText(/not a regulatory|does not replace|informational/i)).toBeVisible();
+  await expect(risk.getByText(/Not a regulatory determination/)).toBeVisible();
   await risk.scrollIntoViewIfNeeded();
   await shot(page, "03-risk-assessment.png");
 
@@ -58,9 +58,12 @@ test("a complaint is logged, corrected and approved entirely through the co-pilo
   await expect(review(page).getByText("revision 1").first()).toBeVisible();
 
   // Approval is refused while any value is unsupported by the source, and allowed once a
-  // reviewer takes responsibility for it.
+  // reviewer takes responsibility for it. The stubbed reply always contains one such value, so
+  // the gate itself is asserted on every pull request; a live model may support everything it
+  // extracted, and then there is nothing to acknowledge.
   const unsupported = review(page).getByText(/not supported by the source/);
   const approve = review(page).getByRole("button", { name: "Approve" });
+  if (!process.env.E2E_REAL) await expect(unsupported).toBeVisible();
   if (await unsupported.count()) {
     await expect(approve).toBeDisabled();
     await review(page).getByRole("checkbox").check();
