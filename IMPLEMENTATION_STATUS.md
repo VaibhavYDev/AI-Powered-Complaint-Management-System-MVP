@@ -3,8 +3,9 @@
 Updated at meaningful checkpoints so the work can be resumed without repeating the audit.
 States: NOT STARTED · IN PROGRESS · VERIFIED · BLOCKED (EXTERNAL) · FAILED
 
-Released. PR #4 is merged, `main` is `e6a0302`, and that exact revision is deployed and
-verified on the public service.
+Released. PR #4 is merged as `e6a0302`, and the public service was verified running that exact
+revision. Render deploys whatever is on `main`, and `/api/health` always reports the revision
+actually serving, so later documentation commits move it on without any claim here going stale.
 
 | Phase | State | Evidence |
 |---|---|---|
