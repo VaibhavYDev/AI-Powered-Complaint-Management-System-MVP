@@ -31,8 +31,6 @@ const EVIDENCE = {
   unsupported: { label: "not in note", classes: "text-red-600" },
 };
 
-const alertKey = (alert) => `${alert.kind}:${alert.observation_index ?? null}`;
-
 export default function CareLab() {
   const dispatch = useDispatch();
   const { record, events, busy, error } = useSelector((s) => s.care);
@@ -42,7 +40,7 @@ export default function CareLab() {
   const [exported, setExported] = useState(null);
 
   const alerts = record?.alerts ?? [];
-  const mustAcknowledge = alerts.filter((a) => a.severity === "high").map(alertKey);
+  const mustAcknowledge = alerts.filter((a) => a.severity === "high").map((a) => a.key);
   const outstanding = mustAcknowledge.filter((key) => !acknowledged.includes(key));
   const pending = record?.status === "needs_review";
 
@@ -174,10 +172,9 @@ export default function CareLab() {
             ) : (
               <ul className="space-y-2">
                 {alerts.map((alert) => {
-                  const key = alertKey(alert);
                   const needsTick = alert.severity === "high" && pending;
                   return (
-                    <li key={key} className={`rounded-md border px-3 py-2 text-sm ${SEVERITY[alert.severity]}`}>
+                    <li key={alert.key} className={`rounded-md border px-3 py-2 text-sm ${SEVERITY[alert.severity]}`}>
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <span className="font-medium">{alert.kind.replace(/_/g, " ")}</span>
                         <span className="text-xs uppercase">{alert.severity}</span>
@@ -187,8 +184,8 @@ export default function CareLab() {
                         <label className="mt-1 flex items-start gap-2 text-xs">
                           <input
                             type="checkbox"
-                            checked={acknowledged.includes(key)}
-                            onChange={() => toggle(key)}
+                            checked={acknowledged.includes(alert.key)}
+                            onChange={() => toggle(alert.key)}
                             className="mt-0.5"
                           />
                           <span>I have checked this against the note.</span>

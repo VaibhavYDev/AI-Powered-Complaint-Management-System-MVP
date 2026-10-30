@@ -7,7 +7,7 @@ Nothing here makes a clinical judgement: the output is documentation to be revie
 from datetime import date
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 
 class Category(str, Enum):
@@ -76,6 +76,14 @@ class CarePlanEntry(BaseModel):
     instruction: str
 
 
+def alert_key(kind: str, observation_index: int | None) -> str:
+    """How an alert is named when a reviewer acknowledges it. The index is left out when there is
+    none, so the key cannot depend on how a language spells null - the reviewer interface used to
+    send `...:null` for an alert the API called `...:None`, which made those alerts impossible to
+    acknowledge and approval impossible to reach."""
+    return kind if observation_index is None else f"{kind}:{observation_index}"
+
+
 class Alert(BaseModel):
     """Something a reviewer should look at. Never a diagnosis or an instruction to treat."""
 
@@ -84,6 +92,12 @@ class Alert(BaseModel):
     message: str
     observation_index: int | None = None
     evidence_path: str | None = None
+
+    @computed_field
+    @property
+    def key(self) -> str:
+        """Sent to the client so acknowledgements are never keyed by a string it built itself."""
+        return alert_key(self.kind, self.observation_index)
 
 
 class CareExtraction(BaseModel):

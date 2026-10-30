@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import current_user, limit_ai
 from ..care.extract import extract, plan_from
-from ..care.schemas import Alert, CareNote, CarePlanEntry
+from ..care.schemas import Alert, CareNote, CarePlanEntry, alert_key
 from ..db import get_db
 from ..models import CareEvent, CareRecord, User
 
@@ -137,7 +137,7 @@ def export(record_id: int, db: Session = Depends(get_db), user: User = Depends(c
 def _high_priority(record: CareRecord) -> set[str]:
     """Alerts a reviewer has to answer for: a wrong resident or an invented finding."""
     return {
-        f"{alert['kind']}:{alert.get('observation_index')}"
+        alert_key(alert["kind"], alert.get("observation_index"))
         for alert in (record.alerts or [])
         if alert.get("severity") == "high"
     }
