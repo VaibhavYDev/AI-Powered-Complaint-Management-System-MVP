@@ -93,5 +93,15 @@ jobs:
             -H 'Content-Type: application/json' --data @body.json)" = "403"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/api/chat \
             -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' --data @body.json)" = "401"
+      - name: The care lab is reachable and equally protected
+        run: |
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8080/api/care)" = "401"
+          csrf=$(curl -s -c jar2 -X POST localhost:8080/api/auth/anonymous | sed -E 's/.*"csrf_token":"([^"]+)".*//')
+          test "$(curl -s -b jar2 -o /dev/null -w '%{http_code}' localhost:8080/api/care)" = "200"
+          printf '{"note":"Anna Keller: redness at the left heel."}' > care.json
+          # No model key in CI, so the call must fail cleanly at the provider rather than 404 or 500.
+          code=$(curl -s -b jar2 -o /dev/null -w '%{http_code}' -X POST localhost:8080/api/care             -H "X-CSRF-Token: $csrf" -H 'Content-Type: application/json' --data @care.json)
+          echo "care extract -> $code"
+          test "$code" = "503"
       - if: always()
         run: docker logs copilot

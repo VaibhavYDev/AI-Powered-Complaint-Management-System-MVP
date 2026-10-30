@@ -185,14 +185,28 @@ def strict_mode() -> bool:
     return output_method(_active_model) == "json_schema"
 
 
+def _client(**extra) -> ChatGroq:
+    """The one place a provider client is built.
+
+    `max_retries` is the SDK's own bounded retry with exponential backoff and jitter, which is
+    what absorbs the 429s that token-per-minute limits produce in bursts. `timeout` bounds a
+    single attempt so a stalled inference cannot hold a worker open.
+    """
+    return ChatGroq(
+        model=_active_model,
+        api_key=settings.groq_api_key,
+        temperature=0,
+        max_retries=settings.llm_max_retries,
+        timeout=settings.llm_timeout_seconds,
+        **extra,
+    )
+
+
 def _runnable(schema: type[BaseModel]):
-    # max_retries=5: the SDK backs off on 429s, which free-tier token-per-minute limits produce in bursts.
     if strict_mode():
-        llm = ChatGroq(model=_active_model, api_key=settings.groq_api_key, temperature=0, max_retries=5,
-                       reasoning_effort=settings.groq_reasoning_effort)
-        return llm.with_structured_output(strict_json_schema(schema), method="json_schema", strict=True)
-    llm = ChatGroq(model=_active_model, api_key=settings.groq_api_key, temperature=0, max_retries=5)
-    return llm.with_structured_output(method="json_mode")
+        client = _client(reasoning_effort=settings.groq_reasoning_effort)
+        return client.with_structured_output(strict_json_schema(schema), method="json_schema", strict=True)
+    return _client().with_structured_output(method="json_mode")
 
 
 def _error_code(exc: APIStatusError) -> str:

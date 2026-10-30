@@ -240,3 +240,32 @@ def test_structured_without_key(chat, monkeypatch):
     with pytest.raises(llm.AIConfigError):
         llm.structured(Answer, "sys", "user")
     assert FakeChatGroq.invoked == []
+
+
+# --- provider reliability ------------------------------------------------------------------------
+
+def test_a_single_inference_attempt_is_bounded(monkeypatch):
+    """A stalled call must not hold a worker open; retries stay bounded with the SDK's backoff."""
+    monkeypatch.setattr(llm, "_active_model", FALLBACK)
+    client = llm._client()
+    assert client.request_timeout == settings.llm_timeout_seconds > 0
+    assert 0 < client.max_retries == settings.llm_max_retries <= 5
+
+
+def test_telemetry_counts_calls_and_tokens_without_recording_content(chat):
+    chat({FALLBACK: [{"value": 1}]})
+    llm.reset_telemetry()
+    llm.structured(Answer, "a system prompt", "a confidential note")
+
+    assert llm.telemetry["calls"] == 1 and llm.telemetry["seconds"] >= 0
+    recorded = str(llm.telemetry)
+    assert "confidential" not in recorded and "system prompt" not in recorded
+
+
+def test_telemetry_classifies_failures(chat):
+    chat({FALLBACK: [{"value": -1}, {"value": 2}]})
+    llm.reset_telemetry()
+    llm.structured(Answer, "sys", "user")
+
+    assert llm.telemetry["retries"] == 1
+    assert llm.telemetry["errors"]["schema_validation"] == 1

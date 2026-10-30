@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
     max_upload_bytes: int = 10 * 1024 * 1024
     max_document_chars: int = 12_000
+    # A single inference must not be able to hold a worker open indefinitely.
+    llm_timeout_seconds: float = 45.0
+    llm_max_retries: int = 3
     db_connect_timeout: int = 5
     health_cache_seconds: float = 5.0
     max_pdf_pages: int = 50
