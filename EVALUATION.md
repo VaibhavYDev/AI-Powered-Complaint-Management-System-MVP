@@ -28,16 +28,23 @@ and costs well under a cent. The scorer is also covered by offline tests
 | Configured model | `gemma2-9b-it` — retired by Groq, so the fallback serves every request |
 | Output method | Groq structured outputs, strict JSON Schema derived from the Pydantic model |
 | Reasoning effort | low |
-| Code revision | recorded in each report as `git_commit` |
+| Code revision measured | `8a0b89c`, recorded in each report as `git_commit` |
 
 ## Results
 
 Three full runs on the same revision. The model is not deterministic, so the spread is shown
 rather than a single flattering figure.
 
+Each report stores the model's prediction for every case, so the published numbers can be
+checked without a provider: re-scoring those stored predictions with the current scorer and the
+current deterministic checks reproduces the metrics in `run-003` and `run-004` exactly. That is
+also how the release confirmed the code has not drifted from what these runs measured. The two
+earliest reports predate the adversarial counters in `aggregate()`, so those three fields are
+`null` there; re-scoring fills them in with the same values the later runs report.
+
 | Metric | run-002 | run-003 | run-004 |
 |---|---|---|---|
-| Cases fully correct | 39/43 | 39/43 | 41/43 |
+| Cases fully correct | 39/43 | 39/43 | 40/43 |
 | Field exact match | 0.967 | 0.956 | 0.989 |
 | Observation recall | 0.974 | 0.947 | 1.000 |
 | Critical omission rate | 0.026 | 0.053 | 0.000 |

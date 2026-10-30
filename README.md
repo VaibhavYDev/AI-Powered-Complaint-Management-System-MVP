@@ -231,7 +231,7 @@ published rather than the best number. Full methodology, denominators and failur
 
 | Metric | run-002 | run-003 | run-004 |
 |---|---|---|---|
-| Cases fully correct | 39/43 | 39/43 | 41/43 |
+| Cases fully correct | 39/43 | 39/43 | 40/43 |
 | Field exact match | 0.967 | 0.956 | 0.989 |
 | Observation recall | 0.974 | 0.947 | 1.000 |
 | Hallucination rate | 0.000 | 0.018 | 0.000 |

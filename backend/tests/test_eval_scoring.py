@@ -137,6 +137,42 @@ def test_f1(precision, recall, expected):
     assert f1(precision, recall) == expected
 
 
+def test_published_results_are_reproducible_from_their_stored_predictions():
+    """Every report keeps the model's answer for each case, so the numbers in EVALUATION.md can
+    be re-derived without a provider. If the scorer, the checks or the dataset drift away from
+    what a published run measured, or a figure is ever edited by hand, this stops being true."""
+    reports = sorted((Path(__file__).resolve().parents[1] / "eval" / "results").glob("run-*.json"))
+    assert reports
+
+    for path in reports:
+        report = json.loads(path.read_text(encoding="utf-8"))
+        scores, runtimes = [], []
+        for entry in report["cases"]:
+            case = CASES[entry["id"]]
+            note = CareNote.model_validate(entry["predicted"])
+            plan = [CarePlanEntry.model_validate(e) for e in case.get("care_plan", [])]
+            evidence, alerts = analyse(note, case["note"], plan)
+            scores.append(score_case(case, note, evidence, alerts))
+            runtimes.append(entry["seconds"])
+
+        published = report["metrics"]
+        recomputed = aggregate(
+            scores, runtimes,
+            calls=published["model_calls"], retries=published["retries"], usage=published["tokens"],
+        )
+        # Only what the scorer itself produces: run.py adds a few derived fields afterwards.
+        # The two earliest reports also predate the adversarial counters, which are null there.
+        drifted = {
+            key: (published[key], value)
+            for key, value in recomputed.items()
+            if published.get(key) is not None and published[key] != value
+        }
+        assert not drifted, f"{path.name} no longer reproduces (published, recomputed): {drifted}"
+        assert published["observation_f1"] == f1(
+            recomputed["observation_precision"], recomputed["observation_recall"]
+        )
+
+
 def test_published_results_exist_and_match_the_dataset_version():
     results = sorted((Path(__file__).resolve().parents[1] / "eval" / "results").glob("run-*.json"))
     assert results, "EVALUATION.md cites runs that must be committed"
